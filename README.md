@@ -1,4 +1,9 @@
-# 🚀 YouTube Shorts Automation System
+# 🚀 Universal Shorts & Reels Automation System
+
+> **v12:** один вертикальний ролик може автоматично розходитися в YouTube
+> Shorts, Instagram Reels, Facebook Reels і TikTok. Окремі підписи, ізоляція
+> помилок платформ і два профілі тривалості описані в
+> [UNIVERSAL_SETUP.md](UNIVERSAL_SETUP.md).
 ## Повна Інструкція по Встановленню та Запуску
 
 ---

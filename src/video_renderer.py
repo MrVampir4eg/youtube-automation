@@ -109,9 +109,10 @@ class VideoRenderer:
             queries = list(dict.fromkeys(query for query in queries if query))
             random.shuffle(queries)
 
-            # 6-14 hard cuts keep a short visually alive without turning it
-            # into an unreadable slideshow.
-            scene_count = max(6, min(14, math.ceil(duration / self.scene_duration)))
+            # Growth clips use 6-14 scenes. The optional 60+ second rewards
+            # profile gets up to 24, preserving a visual reset every ~3 seconds.
+            max_scenes = 24 if duration >= 55 else 14
+            scene_count = max(6, min(max_scenes, math.ceil(duration / self.scene_duration)))
             segment_duration = duration / scene_count
 
             for index in range(scene_count):

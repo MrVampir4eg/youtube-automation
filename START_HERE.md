@@ -33,7 +33,7 @@ C:\Users\Цепеш\AppData\Local\Claude-3p\local-agent-mode-sessions\
 
 ```
 Groq API: YOUR_GROQ_API_KEY
-Pexels API: 0lSMCByhMh0wQQ5D1RCYGdc0trvGCTi1lIYmICPnPPEcXEAv6J4bOsNR
+Pexels API: ВАШ_PEXELS_API_KEY
 ```
 
 Все готово в файлі `.env.production`

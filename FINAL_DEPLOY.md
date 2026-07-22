@@ -83,7 +83,7 @@ git push -u origin main
 6. Environment Variables (скопіюйте з .env.production):
    
    GROQ_API_KEY=YOUR_GROQ_API_KEY
-   PEXELS_API_KEY=0lSMCByhMh0wQQ5D1RCYGdc0trvGCTi1lIYmICPnPPEcXEAv6J4bOsNR
+   PEXELS_API_KEY=ВАШ_PEXELS_API_KEY
    USE_FREE_MODE=True
    FREE_CONTENT_GENERATOR=groq
    FREE_VOICE_SYNTHESIZER=gtts

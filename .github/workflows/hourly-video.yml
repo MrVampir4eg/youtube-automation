@@ -1,4 +1,4 @@
-name: Generate and upload quality Shorts
+name: Generate and publish quality vertical videos
 
 on:
   schedule:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: hourly-youtube-generation
+  group: scheduled-universal-generation
   cancel-in-progress: false
 
 jobs:
@@ -99,20 +99,19 @@ jobs:
             if [[ "$status" == "completed" ]]; then
               cat "$response_file"
 
-              upload_error="$(jq -r '[.videos[]?.upload_error // empty] | join("; ")' "$response_file")"
-              youtube_url="$(jq -r '.videos[0].url // empty' "$response_file")"
+              active_count="$(jq -r '[.videos[0].platform_results[]? | select(.status == "published" or .status == "processing" or .status == "awaiting_user")] | length' "$response_file")"
+              failed="$(jq -r '[.videos[0].platform_results | to_entries[]? | select(.value.status == "failed") | (.key + ": " + (.value.error // "unknown error"))] | join("; ")' "$response_file")"
 
-              if [[ -n "$upload_error" ]]; then
-                echo "YouTube upload failed: $upload_error" >&2
+              if [[ -n "$failed" ]]; then
+                echo "Some platforms failed, other destinations continue: $failed" >&2
+              fi
+
+              if [[ "$active_count" == "0" ]]; then
+                echo "MP4 was generated, but no enabled platform accepted it. Check AUTO_UPLOAD, AUTO_PUBLISH_PLATFORMS and platform tokens." >&2
                 exit 1
               fi
 
-              if [[ -z "$youtube_url" ]]; then
-                echo "Video was generated, but AUTO_UPLOAD is not active or YouTube is not connected" >&2
-                exit 1
-              fi
-
-              echo "Uploaded successfully: $youtube_url"
+              echo "Universal publishing completed for $active_count destination(s)"
               exit 0
             fi
           done

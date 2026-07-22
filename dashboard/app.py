@@ -21,12 +21,16 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from src.orchestrator import VideoProducer
 from src.scheduler import AutomationScheduler
 from src.youtube_uploader import SCOPES
+from src.platform_publishers import is_valid_media_signature
 from database.models import Database
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 CORS(app)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
+# Один process-level secret підписує тимчасові MP4 URL для Instagram. На Render
+# краще задати MEDIA_SHARE_SECRET, але без нього поточний instance теж працює.
+os.environ.setdefault('MEDIA_SHARE_SECRET', str(app.secret_key))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
@@ -71,6 +75,7 @@ def _run_generation_job(job_id, count, niche):
                 'title': result['title'],
                 'url': result.get('youtube_url'),
                 'upload_error': result.get('youtube_error'),
+                'platform_results': result.get('platform_results', {}),
                 'download_url': f"/api/videos/{result['video_id']}/download"
             } for result in results if 'error' not in result]
 
@@ -191,6 +196,12 @@ def youtube_status():
     })
 
 
+@app.route('/api/platforms/status')
+def platforms_status():
+    """Єдина перевірка всіх каналів публікації для Dashboard."""
+    return jsonify({'success': True, **scheduler.producer.publisher.get_status()})
+
+
 @app.route('/api/stats')
 def get_stats():
     """Загальна статистика"""
@@ -238,6 +249,7 @@ def list_videos():
             'niche': v['niche'],
             'duration': v['duration'],
             'youtube_url': v.get('youtube_url'),
+            'platform_results': v.get('platform_results', {}),
             'created_at': v['created_at'],
             'ai_cost': v.get('ai_cost', 0),
             'download_url': f"/api/videos/{v['video_id']}/download"
@@ -285,19 +297,32 @@ def download_video(video_id):
     )
 
 
+@app.route('/api/media/<video_id>/<signature>.mp4')
+def share_video_for_platform(video_id, signature):
+    """Signed short-lived-by-storage URL from which Instagram fetches a Reel."""
+    if not video_id.isalnum() or not is_valid_media_signature(video_id, signature):
+        return jsonify({'success': False, 'error': 'Недійсне посилання'}), 403
+
+    video_path = (video_output_dir / f'{video_id}.mp4').resolve()
+    if video_output_dir not in video_path.parents or not video_path.is_file():
+        return jsonify({'success': False, 'error': 'MP4 не знайдено'}), 404
+
+    response = send_file(
+        video_path,
+        mimetype='video/mp4',
+        as_attachment=False,
+        conditional=True,
+    )
+    response.headers['Cache-Control'] = 'private, max-age=600'
+    return response
+
+
 @app.route('/api/generate', methods=['POST'])
 def generate_video():
     """Запустити фонову генерацію відео."""
     data = request.get_json(silent=True) or {}
     niche = data.get('niche')
     count = max(1, min(int(data.get('count', 1)), 1))
-
-    auto_upload = os.getenv('AUTO_UPLOAD', 'False').lower() == 'true'
-    if auto_upload and not scheduler.producer.youtube.is_configured():
-        return jsonify({
-            'success': False,
-            'error': 'Спочатку підключіть YouTube кнопкою на Dashboard'
-        }), 409
 
     with generation_jobs_lock:
         active_job = next((

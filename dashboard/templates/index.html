@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Shorts Automation Dashboard</title>
+    <title>Universal Reels Automation Dashboard</title>
     <style>
         * {
             margin: 0;
@@ -199,8 +199,58 @@
             gap: 16px;
         }
 
+        .platform-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+        }
+
+        .platform-card {
+            padding: 16px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+        }
+
+        .platform-card h4 {
+            color: #111827;
+            margin-bottom: 8px;
+        }
+
+        .platform-card p {
+            color: #6b7280;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .platform-state {
+            display: inline-block;
+            margin-bottom: 8px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .platform-state.ready { background: #dcfce7; color: #15803d; }
+        .platform-state.pending { background: #fef3c7; color: #b45309; }
+        .platform-state.off { background: #fee2e2; color: #b91c1c; }
+
+        .platform-link {
+            display: inline-block;
+            margin: 4px 2px;
+            background: #4f46e5;
+            color: white;
+            text-decoration: none;
+            padding: 9px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
         .actions {
             display: flex;
+            flex-wrap: wrap;
             gap: 10px;
             margin-bottom: 20px;
         }
@@ -289,7 +339,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎬 YouTube Shorts Automation</h1>
+            <h1>🎬 Universal Reels Automation</h1>
             <p>
                 <span class="status-indicator active"></span>
                 Система активна | Останнє оновлення: <span id="last-update">--:--</span>
@@ -306,7 +356,7 @@
             <div class="stat-card">
                 <h3>Опубліковано</h3>
                 <div class="value" id="uploaded-videos">0</div>
-                <div class="label">на YouTube</div>
+                <div class="label">на YouTube · детальна аналітика</div>
             </div>
 
             <div class="stat-card positive">
@@ -327,11 +377,7 @@
             <div class="actions">
                 <select id="niche-select">
                     <option value="">Випадкова ніша</option>
-                    <option value="motivation">Мотивація</option>
-                    <option value="finance">Фінанси</option>
-                    <option value="history">Історія</option>
-                    <option value="tech">Tech</option>
-                    <option value="productivity">Продуктивність</option>
+                    <option value="">Завантаження ніш…</option>
                 </select>
                 <button onclick="generateVideo()" id="generate-btn">
                     Згенерувати відео
@@ -346,9 +392,12 @@
         </div>
 
         <div class="card">
-            <h2>📺 YouTube</h2>
-            <div class="youtube-status">
-                <div id="youtube-status">Перевірка…</div>
+            <h2>🌐 Канали публікації</h2>
+            <div id="platforms-status" class="platform-grid">
+                <div class="loading">Перевірка підключень…</div>
+            </div>
+            <div class="youtube-status" style="margin-top: 16px;">
+                <small>Один чистий MP4 · окремий підпис для кожної платформи</small>
                 <a class="youtube-link" href="/youtube/connect">Підключити YouTube</a>
             </div>
         </div>
@@ -381,6 +430,18 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>
         let chart = null;
+        const platformNames = {
+            youtube: '▶️ YouTube Shorts',
+            tiktok: '🎵 TikTok',
+            instagram: '📸 Instagram Reels',
+            facebook: '🔵 Facebook Reels'
+        };
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, character => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            })[character]);
+        }
 
         async function loadStats() {
             try {
@@ -396,8 +457,8 @@
                 const topVideosHtml = data.top_videos.map(v => `
                     <div class="video-item">
                         <div class="video-info">
-                            <h4>${v.title}</h4>
-                            <p>${v.niche}</p>
+                            <h4>${escapeHtml(v.title)}</h4>
+                            <p>${escapeHtml(v.niche)}</p>
                         </div>
                         <div class="video-stats">
                             <div class="views">${v.views.toLocaleString()}</div>
@@ -478,24 +539,32 @@
                     throw new Error(data.error || `HTTP ${response.status}`);
                 }
 
-                const html = data.videos.map(video => `
+                const html = data.videos.map(video => {
+                    const links = Object.entries(video.platform_results || {})
+                        .filter(([, result]) => result && result.url)
+                        .map(([platform, result]) => `
+                            <a class="platform-link" href="${escapeHtml(result.url)}" target="_blank" rel="noopener">
+                                ${escapeHtml(platformNames[platform] || platform)}
+                            </a>
+                        `).join('');
+                    return `
                     <div class="video-item">
                         <div class="video-info">
-                            <h4>${video.title}</h4>
-                            <p>${video.video_id} · ${new Date(video.created_at).toLocaleString('uk-UA')}</p>
+                            <h4>${escapeHtml(video.title)}</h4>
+                            <p>${escapeHtml(video.video_id)} · ${new Date(video.created_at).toLocaleString('uk-UA')}</p>
                         </div>
                         <div>
-                            ${video.youtube_url ? `
+                            ${links || (video.youtube_url ? `
                                 <a class="youtube-link" href="${video.youtube_url}" target="_blank" rel="noopener">
                                     YouTube
                                 </a>
-                            ` : ''}
+                            ` : '')}
                             <a class="download-link" href="${video.download_url}">
                                 ⬇️ MP4
                             </a>
                         </div>
                     </div>
-                `).join('');
+                `}).join('');
 
                 document.getElementById('generated-videos').innerHTML =
                     html || '<p class="loading">Поки немає згенерованих відео</p>';
@@ -504,20 +573,40 @@
             }
         }
 
-        async function loadYouTubeStatus() {
+        async function loadPlatformStatus() {
             try {
-                const response = await fetch('/api/youtube/status', {cache: 'no-store'});
+                const response = await fetch('/api/platforms/status', {cache: 'no-store'});
                 const data = await readJsonResponse(response);
-                const status = document.getElementById('youtube-status');
-                if (data.connected && data.auto_upload) {
-                    status.innerHTML = '✅ Підключено · автозавантаження ввімкнено';
-                } else if (data.connected) {
-                    status.innerHTML = '⚠️ Підключено, але AUTO_UPLOAD=False';
-                } else {
-                    status.innerHTML = '❌ YouTube ще не підключено';
-                }
+                const enabled = new Set(data.enabled_platforms || []);
+                document.getElementById('platforms-status').innerHTML = data.platforms.map(item => {
+                    const active = enabled.has(item.platform);
+                    const stateClass = !active ? 'off' : (item.ready ? 'ready' : 'pending');
+                    const stateText = !active ? 'Вимкнено' : (item.ready ? 'Готово' : 'Потрібне підключення');
+                    return `
+                        <div class="platform-card">
+                            <h4>${escapeHtml(platformNames[item.platform] || item.platform)}</h4>
+                            <span class="platform-state ${stateClass}">${stateText}</span>
+                            <p>${escapeHtml(item.note)}</p>
+                        </div>
+                    `;
+                }).join('');
             } catch (error) {
-                console.error('Failed to load YouTube status:', error);
+                console.error('Failed to load platform status:', error);
+            }
+        }
+
+        async function loadNiches() {
+            try {
+                const response = await fetch('/api/niches', {cache: 'no-store'});
+                const data = await readJsonResponse(response);
+                document.getElementById('niche-select').innerHTML = [
+                    '<option value="">Випадкова безпечна ніша</option>',
+                    ...data.niches.map(item =>
+                        `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`
+                    )
+                ].join('');
+            } catch (error) {
+                console.error('Failed to load niches:', error);
             }
         }
 
@@ -542,13 +631,18 @@
 
                 const result = await waitForGeneration(data.job_id, btn);
                 const video = result.videos[0];
-                if (video.upload_error) {
-                    alert(`⚠️ MP4 створено, але YouTube upload не вдався:\n${video.upload_error}`);
-                } else if (video.url) {
-                    alert(`✓ Відео створено і завантажено на YouTube!\n${video.url}`);
+                const results = Object.entries(video.platform_results || {});
+                const summary = results.map(([platform, item]) => {
+                    const icon = ['published', 'processing'].includes(item.status)
+                        ? '✅'
+                        : (item.status === 'awaiting_user' ? '⚠️' : '❌');
+                    return `${icon} ${platformNames[platform] || platform}: ${item.status}${item.error ? ` — ${item.error}` : ''}`;
+                }).join('\n');
+                if (results.length) {
+                    alert(`✓ MP4 створено!\n\n${summary}`);
                 } else {
                     const shouldDownload = confirm(
-                        `✓ Відео створено!\nID: ${video.video_id}\n\nYouTube auto-upload вимкнено. Завантажити MP4?`
+                        `✓ Відео створено!\nID: ${video.video_id}\n\nАвтопублікація вимкнена. Завантажити MP4?`
                     );
                     if (shouldDownload) {
                         window.location.assign(video.download_url);
@@ -615,12 +709,13 @@
             loadStats();
             loadSchedule();
             loadGeneratedVideos();
-            loadYouTubeStatus();
+            loadPlatformStatus();
             document.getElementById('last-update').textContent = new Date().toLocaleTimeString('uk-UA');
         }
 
         // Ініціалізація
         refreshDashboard();
+        loadNiches();
 
         // Авто-оновлення кожні 30 секунд
         setInterval(refreshDashboard, 30000);

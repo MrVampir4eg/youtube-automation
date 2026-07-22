@@ -41,6 +41,7 @@ class Database:
                 filesize INTEGER,
                 youtube_video_id TEXT,
                 youtube_url TEXT,
+                platform_results TEXT,
                 ai_cost REAL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT
@@ -85,6 +86,14 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_analytics_checked ON analytics(checked_at);
         """)
 
+        # Безпечна міграція старої Render SQLite без видалення даних.
+        columns = {
+            row['name']
+            for row in self.conn.execute("PRAGMA table_info(videos)").fetchall()
+        }
+        if 'platform_results' not in columns:
+            self.conn.execute("ALTER TABLE videos ADD COLUMN platform_results TEXT")
+
         self.conn.commit()
         logger.info(f"✓ Database initialized: {self.db_path}")
 
@@ -96,8 +105,8 @@ class Database:
             INSERT INTO videos (
                 video_id, niche, title, description, script,
                 video_path, audio_path, duration, filesize,
-                youtube_video_id, youtube_url, ai_cost, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                youtube_video_id, youtube_url, platform_results, ai_cost, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             video_data['video_id'],
             video_data['niche'],
@@ -110,6 +119,7 @@ class Database:
             video_data['filesize'],
             video_data.get('youtube_video_id'),
             video_data.get('youtube_url'),
+            json.dumps(video_data.get('platform_results', {}), ensure_ascii=False),
             video_data.get('ai_cost', 0),
             video_data['created_at']
         ))
@@ -122,7 +132,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM videos WHERE video_id = ?", (video_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return self._video_row(row) if row else None
 
     def list_videos(self, limit: int = 50, niche: Optional[str] = None) -> List[Dict]:
         """Список відео"""
@@ -138,7 +148,20 @@ class Database:
                 SELECT * FROM videos ORDER BY created_at DESC LIMIT ?
             """, (limit,))
 
-        return [dict(row) for row in cursor.fetchall()]
+        return [self._video_row(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def _video_row(row: sqlite3.Row) -> Dict:
+        video = dict(row)
+        raw_results = video.get('platform_results')
+        if isinstance(raw_results, str):
+            try:
+                video['platform_results'] = json.loads(raw_results) if raw_results else {}
+            except json.JSONDecodeError:
+                video['platform_results'] = {}
+        elif raw_results is None:
+            video['platform_results'] = {}
+        return video
 
     def update_analytics(self, video_id: str, youtube_video_id: str, analytics: Dict):
         """Оновити аналітику відео"""

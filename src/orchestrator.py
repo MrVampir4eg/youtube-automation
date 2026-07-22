@@ -13,6 +13,7 @@ import uuid
 
 from src.video_renderer import VideoRenderer
 from src.youtube_uploader import YouTubeUploader
+from src.platform_publishers import UniversalPublisher, build_platform_metadata
 from database.models import Database, Video
 
 logger = logging.getLogger(__name__)
@@ -47,12 +48,14 @@ class VideoProducer:
 
         self.video_render = VideoRenderer()
         self.youtube = YouTubeUploader()
+        self.publisher = UniversalPublisher(self.youtube)
         self.db = Database()
 
         # Статистика сесії
         self.session_stats = {
             'videos_created': 0,
             'videos_uploaded': 0,
+            'platform_uploads': {},
             'total_cost': 0.0,
             'errors': []
         }
@@ -132,28 +135,39 @@ class VideoProducer:
             logger.info(f"  Title: {seo['title'][:50]}...")
             logger.info(f"  Tags: {len(seo['tags'])} тегів")
 
-            # 5. ЗАВАНТАЖЕННЯ НА YOUTUBE
+            # 5. ПУБЛІКАЦІЯ НА ВСІ ПІДКЛЮЧЕНІ ПЛАТФОРМИ
             youtube_result = None
             youtube_error = None
+            platform_results = {}
             if auto_upload is None:
                 auto_upload = os.getenv('AUTO_UPLOAD', 'False').lower() == 'true'
 
             if auto_upload:
-                logger.info("Step 5/5: Uploading to YouTube...")
-                try:
-                    youtube_result = self.youtube.upload_video(
-                        video_path=video_result['video_path'],
-                        title=seo['title'],
-                        description=seo['description'],
-                        tags=seo['tags'],
-                        category_id=seo['category_id']
+                logger.info("Step 5/5: Publishing to enabled platforms...")
+                platform_metadata = build_platform_metadata(script, seo)
+                platform_results = self.publisher.publish_all(
+                    video_path=video_result['video_path'],
+                    video_id=video_id,
+                    metadata=platform_metadata,
+                )
+                youtube_status = platform_results.get('youtube') or {}
+                if youtube_status.get('status') == 'published':
+                    youtube_result = {
+                        'video_id': youtube_status.get('platform_id'),
+                        'url': youtube_status.get('url'),
+                    }
+                elif youtube_status.get('status') == 'failed':
+                    youtube_error = youtube_status.get('error')
+
+                for platform, result in platform_results.items():
+                    logger.info(
+                        "  %s: %s%s",
+                        platform,
+                        result.get('status'),
+                        f" ({result.get('url')})" if result.get('url') else '',
                     )
-                    logger.info(f"  URL: {youtube_result['url']}")
-                except Exception as exc:
-                    youtube_error = str(exc)
-                    logger.error(f"YouTube upload failed; local MP4 preserved: {exc}")
             else:
-                logger.info("Step 5/5: Skipping upload (auto_upload=False)")
+                logger.info("Step 5/5: Skipping publishing (AUTO_UPLOAD=False)")
 
             # Збереження в БД
             video_data = {
@@ -168,6 +182,7 @@ class VideoProducer:
                 'filesize': video_result['filesize'],
                 'youtube_video_id': youtube_result['video_id'] if youtube_result else None,
                 'youtube_url': youtube_result['url'] if youtube_result else None,
+                'platform_results': platform_results,
                 'created_at': datetime.utcnow().isoformat(),
                 'ai_cost': script['metadata']['cost'] + (audio_result.get('cost', 0) or 0)
             }
@@ -178,6 +193,10 @@ class VideoProducer:
             self.session_stats['videos_created'] += 1
             if youtube_result:
                 self.session_stats['videos_uploaded'] += 1
+            for platform, result in platform_results.items():
+                if result.get('status') in ('published', 'processing', 'awaiting_user'):
+                    uploads = self.session_stats['platform_uploads']
+                    uploads[platform] = uploads.get(platform, 0) + 1
             self.session_stats['total_cost'] += video_data['ai_cost']
 
             logger.info(f"{'='*60}")
@@ -190,6 +209,7 @@ class VideoProducer:
                 'youtube_url': youtube_result['url'] if youtube_result else None,
                 'youtube_video_id': youtube_result['video_id'] if youtube_result else None,
                 'youtube_error': youtube_error,
+                'platform_results': platform_results,
                 'niche': script['niche'],
                 'title': seo['title'],
                 'duration': video_result['duration'],

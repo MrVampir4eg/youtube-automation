@@ -68,6 +68,9 @@ class FreeContentGenerator:
             "TARGET_AUDIENCE",
             "україномовні глядачі 18–34 років, які люблять короткий edutainment",
         )
+        self.content_profile = os.getenv("CONTENT_PROFILE", "growth").strip().lower()
+        if self.content_profile not in {"growth", "rewards"}:
+            self.content_profile = "growth"
         self.max_attempts = max(1, min(3, int(os.getenv("SCRIPT_MAX_ATTEMPTS", "2"))))
         self.min_quality_score = max(
             50, min(95, int(os.getenv("MIN_SCRIPT_QUALITY_SCORE", "78")))
@@ -169,7 +172,7 @@ class FreeContentGenerator:
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.88,
-                    "max_tokens": 900,
+                    "max_tokens": 1400 if self.content_profile == "rewards" else 900,
                 },
                 timeout=35,
             )
@@ -214,7 +217,7 @@ class FreeContentGenerator:
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.88,
-                    "max_tokens": 900,
+                    "max_tokens": 1400 if self.content_profile == "rewards" else 900,
                 },
                 timeout=35,
             )
@@ -264,6 +267,7 @@ class FreeContentGenerator:
                 "provider": provider,
                 "model": model,
                 "market_signals": (market_signals or [])[:6],
+                "content_profile": self.content_profile,
                 "cost": 0.0,
             },
         }
@@ -359,6 +363,15 @@ class FreeContentGenerator:
         )
         market_text = "; ".join(market_signals) or "немає — використай evergreen тему"
         avoid_text = " | ".join(item for item in avoid_hooks if item) or "немає"
+        if self.content_profile == "rewards":
+            duration_rule = "62–80 секунд, 155–205 слів озвучки"
+            pacing_rule = (
+                "Після кожних 2–3 речень додай новий поворот; фінал має окупити "
+                "хвилину уваги."
+            )
+        else:
+            duration_rule = "18–35 секунд, 50–82 слова озвучки"
+            pacing_rule = "Не розтягуй думку: один ролик — одна завершена ідея."
 
         return f"""Створи ОДИН оригінальний український сценарій для вертикального відео.
 
@@ -378,7 +391,8 @@ class FreeContentGenerator:
 5. CTA не озвучується: це лише короткий текст на екрані.
 
 ЖОРСТКІ ВИМОГИ:
-- 18–35 секунд, 50–82 слова озвучки
+- {duration_rule}
+- {pacing_rule}
 - жива розмовна українська; короткі речення; одна доречна іронічна деталь
 - без привітань, води, моралізаторства, «шок», «ти не повіриш», «99% людей»
 - не вигадуй статистику, цитати, дослідження, новини чи особистий досвід
@@ -509,11 +523,20 @@ SOUND_MOOD:
             score += 20
         elif 3 <= len(hook_words) <= 11:
             score += 10
-        if 45 <= len(total_words) <= 88:
+        if self.content_profile == "rewards":
+            ideal_words = 150 <= len(total_words) <= 210
+            acceptable_words = 135 <= len(total_words) <= 225
+            ideal_body = 115 <= len(body_words) <= 180
+        else:
+            ideal_words = 45 <= len(total_words) <= 88
+            acceptable_words = 35 <= len(total_words) <= 100
+            ideal_body = 25 <= len(body_words) <= 65
+
+        if ideal_words:
             score += 18
-        elif 35 <= len(total_words) <= 100:
+        elif acceptable_words:
             score += 8
-        if 25 <= len(body_words) <= 65:
+        if ideal_body:
             score += 10
         if script.get("payoff"):
             score += 12
