@@ -7,6 +7,7 @@ import os
 import json
 import random
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
 import requests
@@ -37,9 +38,9 @@ class FreeContentGenerator:
             self.provider = 'fallback'
 
         # Завантаження конфігурації ніш
-        config_path = 'config/niches.json'
-        if os.path.exists(config_path):
-            with open(config_path, 'r', encoding='utf-8') as f:
+        config_path = Path(__file__).resolve().parents[1] / 'config' / 'niches.json'
+        if config_path.exists():
+            with config_path.open('r', encoding='utf-8') as f:
                 self.config = json.load(f)
         else:
             logger.warning(f"Config not found: {config_path}, using defaults")

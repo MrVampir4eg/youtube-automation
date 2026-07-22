@@ -12,6 +12,7 @@ config/youtube_credentials.json
 config/youtube_token.pickle
 config/*.pickle
 config/*.json
+!config/niches.json
 
 # Database
 *.db

@@ -7,6 +7,7 @@ import os
 import json
 import random
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import openai
@@ -30,7 +31,8 @@ class ContentGenerator:
             self.model = 'claude-3-5-haiku-20241022'  # Швидкий і дешевий
 
         # Завантаження конфігурації ніш
-        with open('config/niches.json', 'r', encoding='utf-8') as f:
+        config_path = Path(__file__).resolve().parents[1] / 'config' / 'niches.json'
+        with config_path.open('r', encoding='utf-8') as f:
             self.config = json.load(f)
 
         self.niches = {n['id']: n for n in self.config['niches']}

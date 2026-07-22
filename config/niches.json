@@ -1,0 +1,264 @@
+{
+  "niches": [
+    {
+      "id": "motivation",
+      "name": "Мотивація та Mindset",
+      "description": "Мотиваційний контент, історії успіху, mindset",
+      "target_cpm": 3.5,
+      "voice": "Adam",
+      "keywords": [
+        "motivation",
+        "success",
+        "mindset",
+        "discipline",
+        "goals",
+        "achievement",
+        "inspiration",
+        "self-improvement"
+      ],
+      "video_themes": [
+        "mountain climbing",
+        "ocean waves",
+        "sunrise",
+        "workout",
+        "running",
+        "meditation"
+      ],
+      "content_templates": [
+        {
+          "type": "success_story",
+          "hook_template": "Ця людина {досягнення} за {час}. Як?",
+          "body_structure": "challenge → struggle → breakthrough → result",
+          "cta": "Підпишись щоб не пропустити історії успіху!"
+        },
+        {
+          "type": "mindset_tip",
+          "hook_template": "{Число} звичок мільярдерів, про які ніхто не говорить",
+          "body_structure": "habit 1 → habit 2 → habit 3 → why it works",
+          "cta": "Збережи щоб не забути!"
+        },
+        {
+          "type": "quote_breakdown",
+          "hook_template": "\"{цитата}\" - {автор}. Ось що це насправді означає...",
+          "body_structure": "quote → context → deep meaning → application",
+          "cta": "Натисни підписатись для більше мудрості!"
+        }
+      ]
+    },
+    {
+      "id": "finance",
+      "name": "Фінанси та Інвестиції",
+      "description": "Фінансові поради, крипто, інвестиції",
+      "target_cpm": 5.0,
+      "voice": "Antoni",
+      "keywords": [
+        "finance",
+        "money",
+        "investing",
+        "crypto",
+        "stocks",
+        "wealth",
+        "passive income",
+        "financial freedom"
+      ],
+      "video_themes": [
+        "stock market",
+        "city skyline",
+        "office",
+        "charts and graphs",
+        "money",
+        "technology"
+      ],
+      "content_templates": [
+        {
+          "type": "money_fact",
+          "hook_template": "{Число}% людей НЕ знають цей факт про гроші...",
+          "body_structure": "surprising fact → explanation → how to use → warning",
+          "cta": "Підпишись для фінансових секретів!"
+        },
+        {
+          "type": "investment_tip",
+          "hook_template": "Я {результат} за {час} використовуючи цю стратегію",
+          "body_structure": "result → strategy → step by step → risks",
+          "cta": "Не пропусти наступні поради!"
+        },
+        {
+          "type": "crypto_news",
+          "hook_template": "{Крипто подія} - ось що це означає для твого портфоліо",
+          "body_structure": "news → analysis → implications → action",
+          "cta": "Слідкуй за крипто-новинами тут!"
+        }
+      ]
+    },
+    {
+      "id": "history",
+      "name": "Історія та Таємниці",
+      "description": "Історичні факти, загадки, нерозкриті таємниці",
+      "target_cpm": 2.5,
+      "voice": "Bella",
+      "keywords": [
+        "history",
+        "mystery",
+        "ancient",
+        "secrets",
+        "civilization",
+        "archaeology",
+        "legends",
+        "unsolved"
+      ],
+      "video_themes": [
+        "ancient ruins",
+        "historical sites",
+        "old documents",
+        "museums",
+        "archaeology",
+        "vintage"
+      ],
+      "content_templates": [
+        {
+          "type": "historical_mystery",
+          "hook_template": "Ця історична таємниця досі не розкрита...",
+          "body_structure": "mystery intro → facts → theories → conclusion",
+          "cta": "Підпишись для більше історичних таємниць!"
+        },
+        {
+          "type": "historical_fact",
+          "hook_template": "{Число} шокуючих фактів про {історична подія}",
+          "body_structure": "fact 1 → fact 2 → fact 3 → why it matters",
+          "cta": "Дізнавайся більше історії з нами!"
+        },
+        {
+          "type": "person_story",
+          "hook_template": "{Історична особа} зробила щось неймовірне...",
+          "body_structure": "who → what they did → how → impact",
+          "cta": "Більше історій великих людей тут!"
+        }
+      ]
+    },
+    {
+      "id": "tech",
+      "name": "Tech та AI",
+      "description": "Технологічні новини, AI, гаджети",
+      "target_cpm": 4.5,
+      "voice": "Josh",
+      "keywords": [
+        "technology",
+        "AI",
+        "artificial intelligence",
+        "gadgets",
+        "innovation",
+        "future",
+        "science",
+        "tech news"
+      ],
+      "video_themes": [
+        "technology",
+        "coding",
+        "AI",
+        "robots",
+        "futuristic",
+        "data center"
+      ],
+      "content_templates": [
+        {
+          "type": "ai_news",
+          "hook_template": "Цей новий AI {досягнення} - майбутнє вже тут",
+          "body_structure": "what → how it works → implications → timeline",
+          "cta": "Слідкуй за AI-новинами тут!"
+        },
+        {
+          "type": "tech_explained",
+          "hook_template": "Як працює {технологія}? Пояснюю за 60 секунд",
+          "body_structure": "simple explanation → deeper dive → real-world use → future",
+          "cta": "Підпишись для tech-освіти!"
+        },
+        {
+          "type": "gadget_review",
+          "hook_template": "Протестував {гаджет} - ось що я виявив...",
+          "body_structure": "first impression → testing → pros/cons → verdict",
+          "cta": "Більше огляд гаджетів тут!"
+        }
+      ]
+    },
+    {
+      "id": "productivity",
+      "name": "Продуктивність та Лайфхаки",
+      "description": "Поради по продуктивності, life hacks, time management",
+      "target_cpm": 3.0,
+      "voice": "Adam",
+      "keywords": [
+        "productivity",
+        "life hacks",
+        "time management",
+        "efficiency",
+        "work",
+        "study",
+        "organization",
+        "habits"
+      ],
+      "video_themes": [
+        "workspace",
+        "planning",
+        "desk setup",
+        "studying",
+        "organized",
+        "calendar"
+      ],
+      "content_templates": [
+        {
+          "type": "productivity_hack",
+          "hook_template": "Цей лайфхак збереже тобі {час} щодня",
+          "body_structure": "problem → solution → how to implement → results",
+          "cta": "Підпишись для більше лайфхаків!"
+        },
+        {
+          "type": "routine_breakdown",
+          "hook_template": "Моя {час дня} рутина для максимальної продуктивності",
+          "body_structure": "morning → key activities → why it works → try it",
+          "cta": "Більше продуктивних рутин тут!"
+        },
+        {
+          "type": "tool_recommendation",
+          "hook_template": "{Число} інструментів які змінять твою продуктивність",
+          "body_structure": "tool 1 → tool 2 → tool 3 → how to start",
+          "cta": "Не пропусти наступні інструменти!"
+        }
+      ]
+    }
+  ],
+
+  "global_settings": {
+    "min_duration_seconds": 45,
+    "max_duration_seconds": 55,
+    "target_hook_seconds": 3,
+    "target_cta_seconds": 5,
+    "words_per_second": 2.5,
+    "preferred_aspect_ratio": "9:16",
+    "video_resolution": "1080x1920"
+  },
+
+  "seo_templates": {
+    "title_formats": [
+      "{hook} | {topic}",
+      "{number} {topic} That {benefit}",
+      "The {adjective} Truth About {topic}",
+      "{topic}: What Nobody Tells You",
+      "I {action} and Here's What Happened"
+    ],
+    "description_template": "🔥 {hook}\n\n{summary}\n\n💡 {cta}\n\n📌 Timestamps:\n0:00 - Intro\n0:03 - {main_point_1}\n0:30 - {main_point_2}\n0:50 - Conclusion\n\n🎯 Subscribe for more {niche} content!\n\n#Shorts #{niche} #{keyword1} #{keyword2}",
+    "tags_strategy": "Mix of broad + niche + trending tags (max 500 chars)"
+  },
+
+  "quality_checks": {
+    "min_hook_impact_score": 7,
+    "max_ai_detection_probability": 0.6,
+    "required_cta_presence": true,
+    "forbidden_words": [
+      "clickbait",
+      "fake",
+      "scam",
+      "illegal",
+      "hack (in security context)"
+    ]
+  }
+}
