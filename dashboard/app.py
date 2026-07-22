@@ -104,7 +104,12 @@ def youtube_connect():
     """Почати Google OAuth для YouTube-каналу."""
     uploader = scheduler.producer.youtube
     try:
-        redirect_uri = url_for('oauth2callback', _external=True, _scheme='https')
+        # Prefer the exact callback configured in Render. Building it from the
+        # incoming proxy request can produce a host that Google has not whitelisted.
+        redirect_uri = (
+            os.getenv('YOUTUBE_REDIRECT_URI', '').strip()
+            or url_for('oauth2callback', _external=True, _scheme='https')
+        )
         flow = Flow.from_client_config(
             uploader.get_oauth_client_config(),
             scopes=SCOPES,
@@ -134,7 +139,8 @@ def oauth2callback():
     state = session.pop('youtube_oauth_state', None)
     redirect_uri = session.pop(
         'youtube_redirect_uri',
-        url_for('oauth2callback', _external=True, _scheme='https')
+        os.getenv('YOUTUBE_REDIRECT_URI', '').strip()
+        or url_for('oauth2callback', _external=True, _scheme='https')
     )
     if not state:
         return jsonify({
