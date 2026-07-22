@@ -47,11 +47,13 @@ scheduler = AutomationScheduler()
 producer = scheduler.producer
 db = Database()
 admin_security = AdminSecurity(db)
+admin_bootstrap_error = None
 try:
     admin_security.bootstrap_from_environment()
 except ValueError as exc:
     # A weak/invalid bootstrap password should not crash Render health checks;
     # login clearly shows that the administrator is not configured.
+    admin_bootstrap_error = str(exc)
     app.logger.error("Admin bootstrap failed: %s", exc)
 
 # Запуск scheduler
@@ -64,6 +66,11 @@ generation_jobs_lock = Lock()
 generation_worker_lock = Lock()
 login_attempts = {}
 login_attempts_lock = Lock()
+
+
+@app.context_processor
+def inject_security_status():
+    return {'admin_bootstrap_error': admin_bootstrap_error}
 
 
 def _client_ip():
