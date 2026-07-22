@@ -10,10 +10,9 @@ from pathlib import Path
 from threading import Lock, Thread
 from flask import (
     Flask, render_template, jsonify, request, redirect, url_for,
-    send_file, session, make_response
+    send_file, session, make_response, flash, g
 )
-from flask_cors import CORS
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from urllib.parse import urlparse
 from google_auth_oauthlib.flow import Flow
@@ -23,11 +22,11 @@ from src.orchestrator import VideoProducer
 from src.scheduler import AutomationScheduler
 from src.youtube_uploader import SCOPES, YouTubeUploader
 from src.platform_publishers import is_valid_media_signature
+from src.admin_security import AdminSecurity
 from database.models import Database
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-CORS(app)
 app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
 # Один process-level secret підписує тимчасові MP4 URL для Instagram. На Render
 # краще задати MEDIA_SHARE_SECRET, але без нього поточний instance теж працює.
@@ -35,7 +34,9 @@ os.environ.setdefault('MEDIA_SHARE_SECRET', str(app.secret_key))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_SECURE=os.getenv('RENDER', 'False').lower() == 'true'
+    SESSION_COOKIE_SECURE=os.getenv('RENDER', 'False').lower() == 'true',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_REFRESH_EACH_REQUEST=True,
 )
 project_root = Path(__file__).resolve().parents[1]
 video_output_dir = (project_root / 'output' / 'videos').resolve()
@@ -45,6 +46,13 @@ video_output_dir = (project_root / 'output' / 'videos').resolve()
 scheduler = AutomationScheduler()
 producer = scheduler.producer
 db = Database()
+admin_security = AdminSecurity(db)
+try:
+    admin_security.bootstrap_from_environment()
+except ValueError as exc:
+    # A weak/invalid bootstrap password should not crash Render health checks;
+    # login clearly shows that the administrator is not configured.
+    app.logger.error("Admin bootstrap failed: %s", exc)
 
 # Запуск scheduler
 scheduler.start()
@@ -54,6 +62,108 @@ scheduler.start()
 generation_jobs = {}
 generation_jobs_lock = Lock()
 generation_worker_lock = Lock()
+login_attempts = {}
+login_attempts_lock = Lock()
+
+
+def _client_ip():
+    return (request.remote_addr or 'unknown')[:100]
+
+
+def _csrf_token():
+    token = session.get('csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['csrf_token'] = token
+    return token
+
+
+def _valid_csrf():
+    submitted = (
+        request.headers.get('X-CSRF-Token')
+        or request.form.get('csrf_token')
+        or ''
+    )
+    expected = session.get('csrf_token') or ''
+    return bool(expected and secrets.compare_digest(expected, submitted))
+
+
+def _is_automation_bot():
+    expected = os.getenv('AUTOMATION_API_TOKEN', '').strip()
+    header = request.headers.get('Authorization', '')
+    if not expected or not header.startswith('Bearer '):
+        return False
+    return secrets.compare_digest(expected, header[7:].strip())
+
+
+def _rate_limited(bucket, limit=5, window_minutes=15):
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=window_minutes)
+    with login_attempts_lock:
+        recent = [stamp for stamp in login_attempts.get(bucket, []) if stamp > cutoff]
+        login_attempts[bucket] = recent
+        return len(recent) >= limit
+
+
+def _record_failed_attempt(bucket):
+    with login_attempts_lock:
+        login_attempts.setdefault(bucket, []).append(datetime.now(timezone.utc))
+
+
+def _clear_attempts(bucket):
+    with login_attempts_lock:
+        login_attempts.pop(bucket, None)
+
+
+PUBLIC_ENDPOINTS = {
+    'login', 'forgot_password', 'reset_password', 'health',
+    'share_video_for_platform', 'static'
+}
+BOT_ENDPOINTS = {'generate_video', 'generation_status', 'bot_status', 'health'}
+
+
+@app.before_request
+def require_admin_and_csrf():
+    """Keep the whole control plane private; signed media remains public."""
+    endpoint = request.endpoint
+    g.automation_bot = bool(endpoint in BOT_ENDPOINTS and _is_automation_bot())
+
+    if endpoint in PUBLIC_ENDPOINTS or g.automation_bot:
+        return None
+
+    admin = db.get_admin()
+    valid_session = bool(
+        session.get('admin_id') == 1
+        and admin
+        and session.get('admin_password_version') == admin.get('updated_at')
+    )
+    if not valid_session:
+        session.clear()
+        if request.path.startswith('/api/'):
+            return jsonify({'success': False, 'error': 'Потрібен вхід адміністратора'}), 401
+        return redirect(url_for('login', next=request.full_path.rstrip('?')))
+
+    if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and not _valid_csrf():
+        if request.path.startswith('/api/'):
+            return jsonify({'success': False, 'error': 'CSRF перевірка не пройдена'}), 403
+        return 'CSRF перевірка не пройдена', 403
+    return None
+
+
+@app.after_request
+def security_headers(response):
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    response.headers.setdefault(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; "
+        "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    if request.endpoint not in {'share_video_for_platform', 'health'}:
+        response.headers.setdefault('Cache-Control', 'no-store')
+    return response
 
 
 def _update_generation_job(job_id, **updates):
@@ -69,6 +179,7 @@ def _run_generation_job(
     profile_id,
     affiliate_offer_id,
     publish_scope,
+    trigger_source,
 ):
     """Фонова генерація одного завдання за раз."""
     with generation_worker_lock:
@@ -86,6 +197,7 @@ def _run_generation_job(
                 profile_id=profile_id,
                 affiliate_offer_id=affiliate_offer_id,
                 publish_scope=publish_scope,
+                trigger_source=trigger_source,
             )
             videos = [{
                 'video_id': result['video_id'],
@@ -110,6 +222,7 @@ def _run_generation_job(
                 videos=videos,
                 completed_at=datetime.utcnow().isoformat()
             )
+            db.finish_automation_run(job_id, 'completed', f'{len(videos)} video(s)')
         except Exception as exc:
             _update_generation_job(
                 job_id,
@@ -117,12 +230,168 @@ def _run_generation_job(
                 error=str(exc),
                 completed_at=datetime.utcnow().isoformat()
             )
+            db.finish_automation_run(job_id, 'failed', str(exc))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    current_admin = db.get_admin()
+    if (
+        session.get('admin_id') == 1
+        and current_admin
+        and session.get('admin_password_version') == current_admin.get('updated_at')
+    ):
+        return redirect(url_for('index'))
+
+    admin_ready = bool(current_admin)
+    if request.method == 'POST':
+        if not _valid_csrf():
+            return render_template(
+                'login.html', csrf_token=_csrf_token(), admin_ready=admin_ready,
+                error='Сторінка застаріла. Оновіть її та повторіть.'
+            ), 403
+        bucket = f"login:{_client_ip()}"
+        if _rate_limited(bucket):
+            return render_template(
+                'login.html', csrf_token=_csrf_token(), admin_ready=admin_ready,
+                error='Забагато спроб. Зачекайте 15 хвилин.'
+            ), 429
+        admin = admin_security.authenticate(
+            request.form.get('email', ''), request.form.get('password', '')
+        )
+        if not admin:
+            _record_failed_attempt(bucket)
+            db.log_audit('login_failed', ip_address=_client_ip())
+            return render_template(
+                'login.html', csrf_token=_csrf_token(), admin_ready=admin_ready,
+                error='Неправильний email або пароль'
+            ), 401
+
+        _clear_attempts(bucket)
+        session.clear()
+        session.permanent = True
+        session['admin_id'] = 1
+        session['admin_password_version'] = admin['updated_at']
+        session['csrf_token'] = secrets.token_urlsafe(32)
+        db.log_audit('login_success', ip_address=_client_ip(), admin_id=1)
+        target = request.args.get('next', '')
+        if not target.startswith('/') or target.startswith('//'):
+            target = url_for('index')
+        return redirect(target)
+
+    return render_template(
+        'login.html', csrf_token=_csrf_token(), admin_ready=admin_ready
+    )
+
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    db.log_audit('logout', ip_address=_client_ip(), admin_id=1)
+    session.clear()
+    return redirect(url_for('login'))
+
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    sent = False
+    error = None
+    if request.method == 'POST':
+        if not _valid_csrf():
+            error = 'Сторінка застаріла. Оновіть її та повторіть.'
+        else:
+            bucket = f"reset:{_client_ip()}"
+            if _rate_limited(bucket, limit=3, window_minutes=30):
+                error = 'Забагато запитів. Спробуйте пізніше.'
+            else:
+                _record_failed_attempt(bucket)
+                email = request.form.get('email', '').strip().lower()
+                base_url = (
+                    os.getenv('PUBLIC_BASE_URL', '').strip()
+                    or request.url_root.rstrip('/')
+                )
+                link = admin_security.create_reset_link(email, base_url)
+                if link:
+                    try:
+                        admin_security.send_reset_email(email, link)
+                        db.log_audit('password_reset_email_sent', ip_address=_client_ip())
+                    except Exception as exc:
+                        app.logger.error('Password reset email failed: %s', exc)
+                        db.log_audit(
+                            'password_reset_email_failed',
+                            {'error_type': type(exc).__name__},
+                            _client_ip(),
+                        )
+                sent = True
+    return render_template(
+        'forgot_password.html', csrf_token=_csrf_token(), sent=sent, error=error
+    )
+
+
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    valid = admin_security.validate_reset_token(token)
+    error = None
+    if request.method == 'POST' and valid:
+        if not _valid_csrf():
+            error = 'Сторінка застаріла. Оновіть її та повторіть.'
+        else:
+            password = request.form.get('password', '')
+            confirmation = request.form.get('password_confirm', '')
+            if password != confirmation:
+                error = 'Паролі не збігаються'
+            else:
+                try:
+                    admin_security.reset_password(token, password)
+                    db.log_audit('password_reset_completed', ip_address=_client_ip())
+                    flash('Пароль змінено. Тепер увійдіть.', 'success')
+                    return redirect(url_for('login'))
+                except ValueError as exc:
+                    error = str(exc)
+    return render_template(
+        'reset_password.html', csrf_token=_csrf_token(), valid=valid, error=error
+    ), (200 if valid else 400)
+
+
+@app.route('/admin/security', methods=['GET', 'POST'])
+def admin_security_page():
+    error = None
+    success = None
+    if request.method == 'POST':
+        new_password = request.form.get('new_password', '')
+        if new_password != request.form.get('new_password_confirm', ''):
+            error = 'Нові паролі не збігаються'
+        else:
+            try:
+                admin_security.change_password(
+                    request.form.get('current_password', ''), new_password
+                )
+                db.log_audit(
+                    'password_changed', ip_address=_client_ip(), admin_id=1
+                )
+                session['admin_password_version'] = db.get_admin()['updated_at']
+                success = 'Пароль змінено. Інші reset-посилання анульовано.'
+            except ValueError as exc:
+                error = str(exc)
+    return render_template(
+        'admin_security.html',
+        csrf_token=_csrf_token(),
+        admin=db.get_admin(),
+        smtp_configured=admin_security.smtp_configured(),
+        bot_configured=bool(os.getenv('AUTOMATION_API_TOKEN')),
+        session_secret_configured=bool(os.getenv('SECRET_KEY')),
+        audit=db.list_audit(30),
+        bot_runs=db.list_automation_runs(20),
+        error=error,
+        success=success,
+    )
 
 
 @app.route('/')
 def index():
     """Головна сторінка"""
-    return render_template('index.html')
+    return render_template(
+        'index.html', csrf_token=_csrf_token(), admin=db.get_admin()
+    )
 
 
 @app.route('/youtube/connect')
@@ -208,6 +477,15 @@ def oauth2callback():
             profile_id,
             credentials.refresh_token,
             channel_info,
+        )
+        db.log_audit(
+            'youtube_channel_connected',
+            {
+                'profile_id': profile_id,
+                'channel_id': channel_info.get('channel_id'),
+            },
+            _client_ip(),
+            1,
         )
         os.environ['AUTO_UPLOAD'] = 'True'
 
@@ -370,6 +648,7 @@ def generate_video():
     content_mode = str(data.get('content_mode', 'organic')).strip().lower()
     profile_id = str(data.get('profile_id', 'default')).strip()
     affiliate_offer_id = data.get('affiliate_offer_id') or None
+    trigger_source = 'official_api_bot' if g.automation_bot else 'manual_admin'
     # Existing scheduled calls do not send this field and keep the old
     # universal behavior. Dashboard sends an explicit safer manual choice.
     publish_scope = str(data.get('publish_scope', 'all_enabled')).strip().lower()
@@ -411,17 +690,34 @@ def generate_video():
             'profile_id': profile_id,
             'affiliate_offer_id': affiliate_offer_id,
             'publish_scope': publish_scope,
+            'trigger_source': trigger_source,
             'videos': []
         }
+        db.start_automation_run(
+            job_id, trigger_source, profile_id, content_mode
+        )
 
     Thread(
         target=_run_generation_job,
         args=(
             job_id, count, niche, content_mode, profile_id,
-            affiliate_offer_id, publish_scope
+            affiliate_offer_id, publish_scope, trigger_source
         ),
         daemon=True
     ).start()
+
+    db.log_audit(
+        'generation_started',
+        {
+            'job_id': job_id,
+            'trigger_source': trigger_source,
+            'profile_id': profile_id,
+            'content_mode': content_mode,
+            'publish_scope': publish_scope,
+        },
+        _client_ip(),
+        1 if not g.automation_bot else None,
+    )
 
     return jsonify({
         'success': True,
@@ -445,6 +741,10 @@ def channel_profiles():
             'error': 'Назва профілю повинна містити від 2 до 80 символів'
         }), 400
     profile = db.create_channel_profile(name)
+    db.log_audit(
+        'channel_profile_created', {'profile_id': profile.get('profile_id')},
+        _client_ip(), 1
+    )
     return jsonify({'success': True, 'profile': profile}), 201
 
 
@@ -459,6 +759,10 @@ def update_channel_profile(profile_id):
         return jsonify({'success': False, 'error': 'Невідомий YouTube privacy status'}), 400
     try:
         profile = db.update_channel_profile(profile_id, data)
+        db.log_audit(
+            'channel_profile_updated', {'profile_id': profile_id},
+            _client_ip(), 1
+        )
         return jsonify({'success': True, 'profile': profile})
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 404
@@ -502,6 +806,11 @@ def affiliate_offers():
         'cta': str(data.get('cta', '')).strip(),
         'disclosure': str(data.get('disclosure', '')).strip(),
     })
+    db.log_audit(
+        'affiliate_offer_created',
+        {'profile_id': profile_id, 'offer_id': offer.get('offer_id')},
+        _client_ip(), 1
+    )
     return jsonify({'success': True, 'offer': offer}), 201
 
 
@@ -516,6 +825,17 @@ def generation_status(job_id):
                 'error': 'Завдання не знайдено; можливо, сервіс перезапустився'
             }), 404
         return jsonify({'success': True, **job})
+
+
+@app.route('/api/bot/status')
+def bot_status():
+    return jsonify({
+        'success': True,
+        'official_api_only': True,
+        'api_token_configured': bool(os.getenv('AUTOMATION_API_TOKEN')),
+        'max_daily_posts_per_profile': producer.policy_guard.max_automated_daily,
+        'runs': db.list_automation_runs(20),
+    })
 
 
 @app.route('/api/schedule')

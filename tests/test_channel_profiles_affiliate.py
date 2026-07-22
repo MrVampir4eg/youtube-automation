@@ -66,6 +66,7 @@ class ChannelProfilesAffiliateTests(unittest.TestCase):
 
         metadata = build_platform_metadata(script, seo)
         self.assertIn("https://example.test/?ref=owner", metadata["youtube"]["description"])
+        self.assertTrue(metadata["youtube"]["contains_synthetic_media"])
         self.assertIn("Партнерське посилання", metadata["instagram"]["caption"])
         self.assertIn("Партнерське посилання", metadata["tiktok"]["caption"])
 

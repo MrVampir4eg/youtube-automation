@@ -124,7 +124,8 @@ class AutomationScheduler:
         try:
             # Генерація відео
             results = self.producer.produce_batch(
-                count=self.videos_per_day
+                count=self.videos_per_day,
+                trigger_source='internal_scheduler',
             )
 
             # Підрахунок успішних
@@ -263,6 +264,7 @@ class AutomationScheduler:
         profile_id: str = 'default',
         affiliate_offer_id: Optional[str] = None,
         publish_scope: str = 'all_enabled',
+        trigger_source: str = 'manual',
     ):
         """Ручний запуск генерації"""
         logger.info(f"Manual generation triggered: {count} videos")
@@ -275,6 +277,7 @@ class AutomationScheduler:
                     profile_id=profile_id,
                     affiliate_offer_id=affiliate_offer_id,
                     publish_scope=publish_scope,
+                    trigger_source=trigger_source,
                 )
                 for _ in range(count)
             ]

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="uk">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Безпека й офіційний бот</title>
+    <style>
+        * { box-sizing:border-box; }
+        body { margin:0; padding:24px; font-family:system-ui,sans-serif; background:#f3f4f6; color:#111827; }
+        .wrap { max-width:1100px; margin:auto; }
+        header, section { background:white; border-radius:16px; padding:24px; margin-bottom:18px; box-shadow:0 8px 28px rgba(15,23,42,.07); }
+        header { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+        h1, h2 { margin-top:0; color:#312e81; }
+        p { color:#6b7280; line-height:1.55; }
+        a { color:#4f46e5; font-weight:750; text-decoration:none; }
+        .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+        .status { padding:15px; border:1px solid #e5e7eb; border-radius:10px; }
+        .ok { color:#047857; } .bad { color:#b45309; }
+        label { display:block; margin:14px 0 6px; font-size:13px; font-weight:750; }
+        input { width:100%; max-width:520px; padding:11px; border:2px solid #e5e7eb; border-radius:8px; font:inherit; }
+        button { margin-top:18px; border:0; border-radius:8px; padding:11px 16px; background:#4f46e5; color:white; font-weight:800; cursor:pointer; }
+        .message { padding:12px; border-radius:9px; margin:12px 0; }
+        .error { background:#fef2f2; color:#b91c1c; } .success { background:#ecfdf5; color:#047857; }
+        table { width:100%; border-collapse:collapse; font-size:13px; }
+        th, td { padding:10px 8px; border-bottom:1px solid #e5e7eb; text-align:left; vertical-align:top; }
+        th { color:#6b7280; }
+        .scroll { overflow-x:auto; }
+        code { white-space:nowrap; }
+        @media(max-width:650px) { body{padding:12px;} header{align-items:flex-start; flex-direction:column;} }
+    </style>
+</head>
+<body>
+<main class="wrap">
+    <header>
+        <div><h1>🔐 Безпека й офіційний бот</h1><p>{{ admin.email }}</p></div>
+        <a href="/">← До панелі</a>
+    </header>
+
+    <section>
+        <h2>Стан захисту</h2>
+        <div class="grid">
+            <div class="status"><strong>Сесія адміністратора</strong><p class="ok">✓ Захищена, до 30 днів</p></div>
+            <div class="status"><strong>Постійний ключ сесії</strong><p class="{{ 'ok' if session_secret_configured else 'bad' }}">{{ '✓ SECRET_KEY налаштовано' if session_secret_configured else '⚠ Додайте SECRET_KEY, інакше redeploy завершить сесію' }}</p></div>
+            <div class="status"><strong>Email-відновлення</strong><p class="{{ 'ok' if smtp_configured else 'bad' }}">{{ '✓ SMTP налаштовано' if smtp_configured else '⚠ Додайте SMTP-змінні в Render' }}</p></div>
+            <div class="status"><strong>Офіційний бот</strong><p class="{{ 'ok' if bot_configured else 'bad' }}">{{ '✓ API-токен налаштовано' if bot_configured else '⚠ AUTOMATION_API_TOKEN відсутній' }}</p></div>
+        </div>
+        <p>Бот лише запускає створення та публікацію через офіційні API. Він не накручує перегляди, лайки, коментарі або підписки.</p>
+    </section>
+
+    <section>
+        <h2>Змінити пароль</h2>
+        <p>Зміна доступна тільки після входу в цю адмінку. Всі невикористані reset-посилання буде анульовано.</p>
+        {% if error %}<div class="message error">{{ error }}</div>{% endif %}
+        {% if success %}<div class="message success">{{ success }}</div>{% endif %}
+        <form method="post" autocomplete="off">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="current_password">Поточний пароль</label>
+            <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
+            <label for="new_password">Новий пароль</label>
+            <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="12" required>
+            <label for="new_password_confirm">Повторіть новий пароль</label>
+            <input id="new_password_confirm" name="new_password_confirm" type="password" autocomplete="new-password" minlength="12" required>
+            <button type="submit">Зберегти новий пароль</button>
+        </form>
+    </section>
+
+    <section>
+        <h2>Останні запуски бота</h2>
+        <div class="scroll"><table>
+            <thead><tr><th>Час</th><th>Канал</th><th>Режим</th><th>Джерело</th><th>Статус</th></tr></thead>
+            <tbody>
+            {% for run in bot_runs %}
+                <tr><td>{{ run.created_at }}</td><td>{{ run.profile_id }}</td><td>{{ run.content_mode }}</td><td>{{ run.trigger_source }}</td><td>{{ run.status }}</td></tr>
+            {% else %}<tr><td colspan="5">Запусків ще не було</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+
+    <section>
+        <h2>Журнал адміністратора</h2>
+        <div class="scroll"><table>
+            <thead><tr><th>Час</th><th>Дія</th><th>IP</th></tr></thead>
+            <tbody>
+            {% for item in audit %}
+                <tr><td>{{ item.created_at }}</td><td><code>{{ item.action }}</code></td><td>{{ item.ip_address or '—' }}</td></tr>
+            {% else %}<tr><td colspan="3">Подій ще немає</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+</main>
+</body>
+</html>

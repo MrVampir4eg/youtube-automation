@@ -154,7 +154,8 @@ class YouTubeUploader:
                     tags: list,
                     category_id: str = '22',
                     privacy_status: str = 'public',
-                    made_for_kids: bool = False) -> Dict:
+                    made_for_kids: bool = False,
+                    contains_synthetic_media: bool = True) -> Dict:
         """
         Завантаження відео на YouTube
 
@@ -212,7 +213,8 @@ class YouTubeUploader:
                 },
                 'status': {
                     'privacyStatus': privacy_status,
-                    'selfDeclaredMadeForKids': made_for_kids
+                    'selfDeclaredMadeForKids': made_for_kids,
+                    'containsSyntheticMedia': bool(contains_synthetic_media),
                 }
             }
 

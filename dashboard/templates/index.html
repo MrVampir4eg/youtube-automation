@@ -42,6 +42,39 @@
             font-size: 14px;
         }
 
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+        }
+
+        .admin-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .admin-actions a,
+        .admin-actions button {
+            border: 0;
+            border-radius: 8px;
+            padding: 9px 12px;
+            background: #eef2ff;
+            color: #4338ca;
+            font-weight: 700;
+            font-size: 13px;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .admin-actions .logout-button {
+            background: #fef2f2;
+            color: #b91c1c;
+        }
+
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -99,6 +132,14 @@
         @media (max-width: 1024px) {
             .content-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .header-top {
+                flex-direction: column;
+            }
+
+            .admin-actions {
+                justify-content: flex-start;
             }
         }
 
@@ -358,11 +399,22 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎬 Universal Reels Automation</h1>
-            <p>
-                <span class="status-indicator active"></span>
-                Система активна | Останнє оновлення: <span id="last-update">--:--</span>
-            </p>
+            <div class="header-top">
+                <div>
+                    <h1>🎬 Universal Reels Automation</h1>
+                    <p>
+                        <span class="status-indicator active"></span>
+                        Система активна | Останнє оновлення: <span id="last-update">--:--</span>
+                    </p>
+                </div>
+                <div class="admin-actions">
+                    <a href="/admin/security">🔐 Безпека й бот</a>
+                    <form action="/logout" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="logout-button" type="submit">Вийти</button>
+                    </form>
+                </div>
+            </div>
         </div>
 
         <div class="stats-grid">
@@ -530,6 +582,7 @@
         let chart = null;
         let channelProfiles = [];
         let affiliateOffers = [];
+        const csrfToken = {{ csrf_token|tojson }};
         const platformNames = {
             youtube: '▶️ YouTube Shorts',
             tiktok: '🎵 TikTok',
@@ -575,6 +628,7 @@
                             ${profile.connected ? 'Підключено' : 'Потрібен Google-вхід'}
                         </span>
                         <p>${escapeHtml(profile.youtube_channel_title || 'YouTube-канал ще не визначено')}</p>
+                        <p>ID для бота: <code>${escapeHtml(profile.profile_id)}</code></p>
                         <div class="profile-actions">
                             <a class="youtube-link" href="/youtube/connect?profile_id=${encodeURIComponent(profile.profile_id)}">
                                 ${profile.connected ? 'Перепідключити' : 'Підключити YouTube'}
@@ -594,7 +648,11 @@
             if (!name) return alert('Вкажіть назву нового каналу');
             try {
                 const response = await fetch('/api/channel-profiles', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
                     body: JSON.stringify({name})
                 });
                 const data = await readJsonResponse(response);
@@ -641,6 +699,7 @@
                         <span class="platform-state ready">Активна</span>
                         <p>${escapeHtml(item.description)}</p>
                         <p style="margin-top:8px; word-break:break-all;">${escapeHtml(item.url)}</p>
+                        <p>ID для бота: <code>${escapeHtml(item.offer_id)}</code></p>
                     </div>
                 `).join('')
                 : '<p class="loading">Для цього каналу ще немає партнерських пропозицій</p>';
@@ -657,7 +716,11 @@
             };
             try {
                 const response = await fetch('/api/affiliate-offers', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
                     body: JSON.stringify(payload)
                 });
                 const data = await readJsonResponse(response);
@@ -874,7 +937,10 @@
             try {
                 const response = await fetch('/api/generate', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
                     body: JSON.stringify({
                         niche: niche || null,
                         count: 1,
@@ -920,6 +986,10 @@
         }
 
         async function readJsonResponse(response) {
+            if (response.status === 401) {
+                window.location.assign('/login');
+                throw new Error('Сесію завершено. Увійдіть повторно.');
+            }
             const body = await response.text();
             if (!body) {
                 throw new Error(`Сервер не повернув відповідь (HTTP ${response.status})`);
@@ -958,7 +1028,14 @@
 
         async function refreshAnalytics() {
             try {
-                await fetch('/api/analytics/refresh', {method: 'POST'});
+                const response = await fetch('/api/analytics/refresh', {
+                    method: 'POST',
+                    headers: {'X-CSRF-Token': csrfToken}
+                });
+                if (!response.ok) {
+                    const data = await readJsonResponse(response);
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
                 alert('✓ Аналітика оновлюється...');
                 setTimeout(refreshDashboard, 5000);
             } catch (error) {

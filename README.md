@@ -1,5 +1,11 @@
 # 🚀 Universal Shorts & Reels Automation System
 
+> **v14:** захищений вхід одного адміністратора, зміна й email-відновлення
+> пароля, CSRF, журнал дій, окремий токен офіційного бота та Policy Guard.
+> Налаштування: [SECURITY_AND_BOT_SETUP.md](SECURITY_AND_BOT_SETUP.md).
+> План продукту й монетизаційно-безпечного росту:
+> [PLATFORM_GROWTH_STRATEGY.md](PLATFORM_GROWTH_STRATEGY.md).
+
 > **v13:** окремі профілі YouTube-каналів і два режими генерації — звичайний
 > та партнерський. Вибір каналу, AI-пропозиції та цілі публікації виконується
 > прямо на Dashboard. Див. [CHANNEL_PROFILES_AFFILIATE.md](CHANNEL_PROFILES_AFFILIATE.md).

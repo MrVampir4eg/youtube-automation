@@ -16,6 +16,7 @@ from src.youtube_uploader import YouTubeUploader
 from src.platform_publishers import (
     UniversalPublisher, build_platform_metadata, enabled_platforms
 )
+from src.policy_guard import MonetizationPolicyGuard
 from database.models import Database, Video
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class VideoProducer:
         self.youtube = YouTubeUploader()
         self.publisher = UniversalPublisher(self.youtube)
         self.db = Database()
+        self.policy_guard = MonetizationPolicyGuard(self.db)
 
         # Статистика сесії
         self.session_stats = {
@@ -68,7 +70,8 @@ class VideoProducer:
                      content_mode: str = 'organic',
                      profile_id: str = 'default',
                      affiliate_offer_id: Optional[str] = None,
-                     publish_scope: str = 'all_enabled') -> Dict:
+                     publish_scope: str = 'all_enabled',
+                     trigger_source: str = 'manual') -> Dict:
         """
         Повний цикл створення відео: генерація → озвучка → рендеринг → публікація
 
@@ -100,6 +103,8 @@ class VideoProducer:
             offer = self.db.get_affiliate_offer(affiliate_offer_id)
             if not offer or offer.get('profile_id') != profile_id:
                 raise ValueError('Партнерська пропозиція не належить цьому каналу')
+        if trigger_source not in {'manual', 'manual_admin'}:
+            self.policy_guard.validate_automated_frequency(profile_id)
 
         video_id = str(uuid.uuid4())[:8]
         logger.info(f"{'='*60}")
@@ -115,6 +120,11 @@ class VideoProducer:
                 affiliate_offer=offer,
                 channel_name=profile.get('youtube_channel_title') or profile['name'],
             )
+            # All rendered videos use synthetic narration and/or generated
+            # creative assistance. A conservative disclosure is safer and does
+            # not itself make content ineligible for monetization.
+            script.setdefault('metadata', {})['contains_synthetic_media'] = True
+            self.policy_guard.validate_script(script, content_mode, offer)
 
             logger.info(f"  Ніша: {script['niche_name']}")
             logger.info(
@@ -158,6 +168,7 @@ class VideoProducer:
             # 4. ГЕНЕРАЦІЯ SEO МЕТАДАНИХ
             logger.info("Step 4/5: Generating SEO metadata...")
             seo = self.content_gen.generate_seo_metadata(script)
+            self.policy_guard.validate_metadata(seo, content_mode)
 
             logger.info(f"  Title: {seo['title'][:50]}...")
             logger.info(f"  Tags: {len(seo['tags'])} тегів")
@@ -295,7 +306,12 @@ class VideoProducer:
             allow_environment_token=False,
         )
 
-    def produce_batch(self, count: int, niches: Optional[list] = None) -> list:
+    def produce_batch(
+        self,
+        count: int,
+        niches: Optional[list] = None,
+        trigger_source: str = 'manual',
+    ) -> list:
         """
         Пакетне створення відео
 
@@ -318,7 +334,10 @@ class VideoProducer:
                 niche = niche_rotation[niche_index % len(niche_rotation)]
                 logger.info(f"\n>>> Video {i+1}/{count} (Niche: {niche})")
 
-                result = self.produce_video(niche_id=niche)
+                result = self.produce_video(
+                    niche_id=niche,
+                    trigger_source=trigger_source,
+                )
                 results.append(result)
 
                 niche_index += 1

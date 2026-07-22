@@ -103,6 +103,9 @@ def build_platform_metadata(script: Dict, seo: Dict) -> Dict[str, Dict]:
             "description": youtube_description[:5000],
             "tags": list(seo.get("tags") or [])[:15],
             "category_id": str(seo.get("category_id") or "22"),
+            "contains_synthetic_media": bool(
+                script.get("metadata", {}).get("contains_synthetic_media", True)
+            ),
         },
         "instagram": {"caption": instagram_caption},
         "tiktok": {"caption": tiktok_caption},
@@ -556,6 +559,9 @@ class UniversalPublisher:
                             description=values["description"],
                             tags=values["tags"],
                             category_id=values["category_id"],
+                            contains_synthetic_media=values.get(
+                                "contains_synthetic_media", True
+                            ),
                         )
                         result = PublishResult(
                             platform,

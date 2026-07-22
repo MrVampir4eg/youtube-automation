@@ -125,11 +125,53 @@ class Database:
                 FOREIGN KEY (profile_id) REFERENCES channel_profiles(profile_id)
             );
 
+            CREATE TABLE IF NOT EXISTS admin_users (
+                admin_id INTEGER PRIMARY KEY CHECK (admin_id = 1),
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                last_login_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                token_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id INTEGER NOT NULL,
+                token_hash TEXT UNIQUE NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (admin_id) REFERENCES admin_users(admin_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_log (
+                audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id INTEGER,
+                action TEXT NOT NULL,
+                details TEXT,
+                ip_address TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS automation_runs (
+                run_id TEXT PRIMARY KEY,
+                trigger_source TEXT NOT NULL,
+                profile_id TEXT,
+                content_mode TEXT,
+                status TEXT NOT NULL,
+                message TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_videos_niche ON videos(niche);
             CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at);
             CREATE INDEX IF NOT EXISTS idx_analytics_video ON analytics(video_id);
             CREATE INDEX IF NOT EXISTS idx_analytics_checked ON analytics(checked_at);
             CREATE INDEX IF NOT EXISTS idx_offers_profile ON affiliate_offers(profile_id);
+            CREATE INDEX IF NOT EXISTS idx_reset_token_hash ON password_reset_tokens(token_hash);
+            CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+            CREATE INDEX IF NOT EXISTS idx_automation_created ON automation_runs(created_at);
         """)
 
         # Безпечна міграція старої Render SQLite без видалення даних.
@@ -217,6 +259,16 @@ class Database:
             """, (limit,))
 
         return [self._video_row(row) for row in cursor.fetchall()]
+
+    def count_videos_since(self, profile_id: str, since_iso: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS total FROM videos
+            WHERE COALESCE(profile_id, 'default') = ? AND created_at >= ?
+            """,
+            (profile_id, since_iso),
+        ).fetchone()
+        return int(row['total'] if row else 0)
 
     @staticmethod
     def _video_row(row: sqlite3.Row) -> Dict:
@@ -519,6 +571,192 @@ class Database:
             offer['keywords'] = []
         offer['enabled'] = bool(offer.get('enabled'))
         return offer
+
+    # ------------------------------------------------------------------
+    # Single-administrator security
+    # ------------------------------------------------------------------
+
+    def get_admin(self) -> Optional[Dict]:
+        row = self.conn.execute(
+            "SELECT * FROM admin_users WHERE admin_id = 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+    def create_admin(self, email: str, password_hash: str) -> Dict:
+        if self.get_admin():
+            raise ValueError('Адміністратор уже створений')
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            INSERT INTO admin_users (
+                admin_id, email, password_hash, created_at, updated_at
+            ) VALUES (1, ?, ?, ?, ?)
+            """,
+            (email.strip().lower(), password_hash, now, now),
+        )
+        self.conn.commit()
+        return self.get_admin() or {}
+
+    def update_admin_login(self) -> None:
+        self.conn.execute(
+            "UPDATE admin_users SET last_login_at = ? WHERE admin_id = 1",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+        self.conn.commit()
+
+    def update_admin_password(self, password_hash: str) -> None:
+        cursor = self.conn.execute(
+            """
+            UPDATE admin_users SET password_hash = ?, updated_at = ?
+            WHERE admin_id = 1
+            """,
+            (password_hash, datetime.now(timezone.utc).isoformat()),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError('Адміністратор не налаштований')
+        # Changing a password invalidates every outstanding reset link.
+        self.conn.execute(
+            """
+            UPDATE password_reset_tokens SET used_at = ?
+            WHERE admin_id = 1 AND used_at IS NULL
+            """,
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+        self.conn.commit()
+
+    def create_password_reset_token(
+        self, token_hash: str, expires_at: str
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            UPDATE password_reset_tokens SET used_at = ?
+            WHERE admin_id = 1 AND used_at IS NULL
+            """,
+            (now,),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO password_reset_tokens (
+                admin_id, token_hash, expires_at, created_at
+            ) VALUES (1, ?, ?, ?)
+            """,
+            (token_hash, expires_at, now),
+        )
+        self.conn.commit()
+
+    def get_valid_password_reset(self, token_hash: str) -> Optional[Dict]:
+        now = datetime.now(timezone.utc).isoformat()
+        row = self.conn.execute(
+            """
+            SELECT * FROM password_reset_tokens
+            WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
+            ORDER BY token_id DESC LIMIT 1
+            """,
+            (token_hash, now),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def mark_password_reset_used(self, token_hash: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE password_reset_tokens SET used_at = ?
+            WHERE token_hash = ? AND used_at IS NULL
+            """,
+            (datetime.now(timezone.utc).isoformat(), token_hash),
+        )
+        self.conn.commit()
+
+    def log_audit(
+        self,
+        action: str,
+        details: Optional[Dict] = None,
+        ip_address: Optional[str] = None,
+        admin_id: Optional[int] = None,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO audit_log (
+                admin_id, action, details, ip_address, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                admin_id,
+                action[:120],
+                json.dumps(details or {}, ensure_ascii=False),
+                (ip_address or '')[:100],
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self.conn.commit()
+
+    def list_audit(self, limit: int = 50) -> List[Dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?",
+            (max(1, min(limit, 200)),),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['details'] = json.loads(item.get('details') or '{}')
+            except json.JSONDecodeError:
+                item['details'] = {}
+            result.append(item)
+        return result
+
+    # ------------------------------------------------------------------
+    # Official automation bot run log
+    # ------------------------------------------------------------------
+
+    def start_automation_run(
+        self,
+        run_id: str,
+        trigger_source: str,
+        profile_id: str,
+        content_mode: str,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO automation_runs (
+                run_id, trigger_source, profile_id, content_mode,
+                status, created_at
+            ) VALUES (?, ?, ?, ?, 'queued', ?)
+            """,
+            (
+                run_id,
+                trigger_source[:40],
+                profile_id,
+                content_mode,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self.conn.commit()
+
+    def finish_automation_run(
+        self, run_id: str, status: str, message: str = ''
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE automation_runs
+            SET status = ?, message = ?, completed_at = ?
+            WHERE run_id = ?
+            """,
+            (
+                status[:20],
+                message[:1000],
+                datetime.now(timezone.utc).isoformat(),
+                run_id,
+            ),
+        )
+        self.conn.commit()
+
+    def list_automation_runs(self, limit: int = 30) -> List[Dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM automation_runs ORDER BY created_at DESC LIMIT ?",
+            (max(1, min(limit, 100)),),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def __del__(self):
         self.close()

@@ -2,9 +2,32 @@ name: Generate and publish quality vertical videos
 
 on:
   schedule:
-    - cron: '5 8,12,17,21 * * *'
+    - cron: '5 6,12,18 * * *'
       timezone: 'Europe/Kyiv'
   workflow_dispatch:
+    inputs:
+      profile_id:
+        description: 'Channel profile ID from the admin dashboard'
+        required: false
+        default: 'default'
+      content_mode:
+        description: 'organic or affiliate'
+        required: false
+        type: choice
+        options: [organic, affiliate]
+        default: organic
+      affiliate_offer_id:
+        description: 'Required only for affiliate mode'
+        required: false
+      publish_scope:
+        description: 'Where the official bot may publish'
+        required: false
+        type: choice
+        options: [all_enabled, youtube_only, create_only]
+        default: all_enabled
+      niche:
+        description: 'Optional niche ID; blank uses safe rotation'
+        required: false
 
 permissions:
   contents: read
@@ -22,10 +45,39 @@ jobs:
       - name: Wake Render and start one video
         id: start
         shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.AUTOMATION_API_TOKEN }}
+          APP_URL: ${{ vars.PUBLIC_BASE_URL || 'https://youtube-automation-zoiy.onrender.com' }}
+          PROFILE_ID: ${{ inputs.profile_id || vars.BOT_PROFILE_ID || 'default' }}
+          CONTENT_MODE: ${{ inputs.content_mode || vars.BOT_CONTENT_MODE || 'organic' }}
+          AFFILIATE_OFFER_ID: ${{ inputs.affiliate_offer_id || vars.BOT_AFFILIATE_OFFER_ID || '' }}
+          PUBLISH_SCOPE: ${{ inputs.publish_scope || vars.BOT_PUBLISH_SCOPE || 'all_enabled' }}
+          NICHE: ${{ inputs.niche || vars.BOT_NICHE || '' }}
         run: |
           set -euo pipefail
 
-          app_url="https://youtube-automation-zoiy.onrender.com"
+          if [[ -z "$BOT_TOKEN" ]]; then
+            echo "Add AUTOMATION_API_TOKEN to GitHub Actions secrets" >&2
+            exit 1
+          fi
+
+          app_url="${APP_URL%/}"
+          payload="$(
+            jq -n \
+              --arg profile "$PROFILE_ID" \
+              --arg mode "$CONTENT_MODE" \
+              --arg offer "$AFFILIATE_OFFER_ID" \
+              --arg scope "$PUBLISH_SCOPE" \
+              --arg niche "$NICHE" \
+              '{
+                count: 1,
+                profile_id: $profile,
+                content_mode: $mode,
+                affiliate_offer_id: (if $offer == "" then null else $offer end),
+                publish_scope: $scope,
+                niche: (if $niche == "" then null else $niche end)
+              }'
+          )"
           response_file="$(mktemp)"
           http_code="$(
             curl --silent --show-error \
@@ -38,7 +90,8 @@ jobs:
               --write-out '%{http_code}' \
               --request POST \
               --header 'Content-Type: application/json' \
-              --data '{"count":1}' \
+              --header "Authorization: Bearer $BOT_TOKEN" \
+              --data "$payload" \
               "$app_url/api/generate"
           )"
 
@@ -63,6 +116,7 @@ jobs:
         env:
           APP_URL: ${{ steps.start.outputs.app_url }}
           JOB_ID: ${{ steps.start.outputs.job_id }}
+          BOT_TOKEN: ${{ secrets.AUTOMATION_API_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -77,6 +131,7 @@ jobs:
                 --retry-all-errors \
                 --connect-timeout 30 \
                 --max-time 120 \
+                --header "Authorization: Bearer $BOT_TOKEN" \
                 --output "$response_file" \
                 --write-out '%{http_code}' \
                 "$APP_URL/api/generate/$JOB_ID"
