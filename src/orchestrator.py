@@ -11,8 +11,6 @@ from datetime import datetime
 import json
 import uuid
 
-from src.content_generator import ContentGenerator
-from src.voice_synthesizer import VoiceSynthesizer
 from src.video_renderer import VideoRenderer
 from src.youtube_uploader import YouTubeUploader
 from database.models import Database, Video
@@ -39,6 +37,11 @@ class VideoProducer:
             self.voice_synth = FreeVoiceSynthesizer()
             logger.info("✓ Free mode enabled: Groq/fallback + gTTS")
         else:
+            # Платні SDK імпортуємо лише коли вони справді потрібні.
+            # Це не дає несумісному ElevenLabs SDK зламати free mode.
+            from src.content_generator import ContentGenerator
+            from src.voice_synthesizer import VoiceSynthesizer
+
             self.content_gen = ContentGenerator()
             self.voice_synth = VoiceSynthesizer()
 
