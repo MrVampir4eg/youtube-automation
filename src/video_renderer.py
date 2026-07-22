@@ -4,6 +4,8 @@ Video Renderer
 """
 
 import os
+import hashlib
+import math
 import logging
 import random
 from pathlib import Path
@@ -22,6 +24,7 @@ from moviepy.editor import (
 )
 from moviepy.video.fx.fadein import fadein
 from moviepy.video.fx.fadeout import fadeout
+from moviepy.video.fx.crop import crop
 import time
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,11 @@ class VideoRenderer:
     def __init__(self):
         self.pexels_api_key = os.getenv('PEXELS_API_KEY')
         self.pixabay_api_key = os.getenv('PIXABAY_API_KEY')
+        self._pexels_warning_emitted = False
+        self.scene_duration = max(
+            2.5,
+            float(os.getenv('SCENE_DURATION_SECONDS', 4.5))
+        )
 
         # Free Render instance має мало RAM, тому за замовчуванням
         # рендеримо 540x960. Якість можна підняти через env.
@@ -85,22 +93,41 @@ class VideoRenderer:
         """
         logger.info(f"Rendering video: {video_id}")
         start_time = time.time()
+        background_parts = []
 
         try:
-            # 1. Завантажити background відео/зображення
-            background = self._get_background_media(
-                script_data['video_themes'],
-                script_data['estimated_duration']
-            )
-
-            # 2. Завантажити аудіо
+            # 1. Реальна тривалість визначається готовою озвучкою.
             audio = AudioFileClip(str(audio_path))
             duration = audio.duration
 
-            # 3. Підготувати background до потрібного розміру
-            background_clip = self._prepare_background(background, duration)
+            # 2. Кілька коротких сцен замість одного статичного фону.
+            queries = (
+                script_data.get('visual_queries')
+                or script_data.get('video_themes')
+                or ['interesting discovery']
+            )
+            queries = list(dict.fromkeys(query for query in queries if query))
+            random.shuffle(queries)
 
-            # 4. Додати субтитри
+            scene_count = max(4, min(10, math.ceil(duration / self.scene_duration)))
+            segment_duration = duration / scene_count
+
+            for index in range(scene_count):
+                query = queries[index % len(queries)]
+                media_path = self._get_background_media(
+                    [query],
+                    max(3, math.ceil(segment_duration))
+                )
+                background_parts.append(
+                    self._prepare_background(media_path, segment_duration)
+                )
+
+            background_clip = (
+                concatenate_videoclips(background_parts, method='compose')
+                if len(background_parts) > 1 else background_parts[0]
+            ).subclip(0, duration)
+
+            # 3. Додати короткі синхронні субтитри
             if os.getenv('AUTO_CAPTIONS', 'True').lower() == 'true':
                 video_with_subs = self._add_captions(
                     background_clip,
@@ -110,14 +137,14 @@ class VideoRenderer:
             else:
                 video_with_subs = background_clip
 
-            # 5. Додати аудіо
+            # 4. Додати аудіо
             final_video = video_with_subs.set_audio(audio)
 
-            # 6. Додати fade in/out
-            final_video = fadein(final_video, 0.5)
-            final_video = fadeout(final_video, 0.5)
+            # 5. Короткий fade не витрачає дорогоцінну першу секунду.
+            final_video = fadein(final_video, 0.12)
+            final_video = fadeout(final_video, 0.2)
 
-            # 7. Експорт
+            # 6. Експорт
             output_path = self.output_dir / f"{video_id}.mp4"
 
             final_video.write_videofile(
@@ -132,6 +159,9 @@ class VideoRenderer:
 
             # Cleanup
             background_clip.close()
+            for part in background_parts:
+                if part is not background_clip:
+                    part.close()
             audio.close()
             if video_with_subs != background_clip:
                 video_with_subs.close()
@@ -174,7 +204,9 @@ class VideoRenderer:
         theme = random.choice(themes)
 
         # Перевіряємо кеш
-        cache_key = f"{theme}_{duration}s"
+        cache_key = hashlib.sha1(
+            f"{theme}|{duration}|{self.width}x{self.height}".encode('utf-8')
+        ).hexdigest()[:16]
         cache_path = self.cache_dir / f"{cache_key}.mp4"
 
         if cache_path.exists():
@@ -200,18 +232,22 @@ class VideoRenderer:
                 return cache_path
 
             # Fallback: статичне зображення з Pexels
-            logger.warning("No video found, using static image")
+            logger.info("Stock video unavailable for this scene; using visual fallback")
             return self._get_static_background(theme)
 
         except Exception as e:
             logger.error(f"Failed to get background: {e}")
             # Fallback: створюємо градієнт
-            return self._create_gradient_background()
+            return self._create_gradient_background(theme)
 
     def _search_pexels_video(self, query: str, min_duration: int) -> Optional[str]:
         """Пошук відео на Pexels"""
         if not self.pexels_api_key:
-            logger.warning("No Pexels API key configured")
+            if not self._pexels_warning_emitted:
+                logger.warning(
+                    "No Pexels API key configured; using generated multi-scene backgrounds"
+                )
+                self._pexels_warning_emitted = True
             return None
 
         url = "https://api.pexels.com/videos/search"
@@ -231,18 +267,27 @@ class VideoRenderer:
             response.raise_for_status()
             data = response.json()
 
-            # Фільтруємо відео по тривалості
-            for video in data.get('videos', []):
-                if video['duration'] >= min_duration:
-                    # Шукаємо HD portrait версію
-                    for file in video['video_files']:
-                        if (file.get('width') == 1080 and
-                            file.get('height') >= 1920):
-                            return file['link']
-
-                    # Якщо немає exact match, беремо найкращу якість
-                    best = max(video['video_files'],
-                              key=lambda x: x.get('width', 0) * x.get('height', 0))
+            candidates = [
+                video for video in data.get('videos', [])
+                if video.get('duration', 0) >= min_duration
+            ]
+            if candidates:
+                video = random.choice(candidates[:10])
+                files = video.get('video_files', [])
+                portrait_files = [
+                    file for file in files
+                    if file.get('height', 0) > file.get('width', 0)
+                ]
+                usable_files = portrait_files or files
+                if usable_files:
+                    # Достатня якість без зайвого навантаження на Render Free.
+                    best = min(
+                        usable_files,
+                        key=lambda file: abs(
+                            (file.get('width', self.width) or self.width)
+                            - self.width
+                        )
+                    )
                     return best['link']
 
             return None
@@ -253,13 +298,14 @@ class VideoRenderer:
 
     def _get_static_background(self, query: str) -> Path:
         """Завантаження статичного зображення"""
-        cache_path = self.cache_dir / f"img_{query}.jpg"
+        query_key = hashlib.sha1(query.encode('utf-8')).hexdigest()[:14]
+        cache_path = self.cache_dir / f"img_{query_key}.jpg"
 
         if cache_path.exists():
             return cache_path
 
         if not self.pexels_api_key:
-            return self._create_gradient_background()
+            return self._create_gradient_background(query)
 
         url = "https://api.pexels.com/v1/search"
         headers = {"Authorization": self.pexels_api_key}
@@ -295,28 +341,51 @@ class VideoRenderer:
             logger.error(f"Failed to get image: {e}")
 
         # Fallback
-        return self._create_gradient_background()
+        return self._create_gradient_background(query)
 
-    def _create_gradient_background(self) -> Path:
-        """Створення градієнтного background як fallback"""
-        cache_path = self.cache_dir / "gradient_default.jpg"
+    def _create_gradient_background(self, theme: str = 'generic') -> Path:
+        """Створення різних атмосферних фонів, якщо stock API недоступний."""
+        theme_key = hashlib.sha1(theme.encode('utf-8')).hexdigest()[:12]
+        cache_path = self.cache_dir / f"gradient_{theme_key}.jpg"
 
         if cache_path.exists():
             return cache_path
 
-        # Створюємо красивий градієнт
+        digest = hashlib.sha256(theme.encode('utf-8')).digest()
+        start = (
+            18 + digest[0] % 48,
+            15 + digest[1] % 42,
+            45 + digest[2] % 90
+        )
+        end = (
+            70 + digest[3] % 130,
+            35 + digest[4] % 110,
+            90 + digest[5] % 150
+        )
+
         img = Image.new('RGB', (self.width, self.height))
         draw = ImageDraw.Draw(img)
 
-        # Темно-синій до фіолетового градієнт
         for y in range(self.height):
-            r = int(30 + (120 * y / self.height))
-            g = int(30 + (50 * y / self.height))
-            b = int(80 + (150 * y / self.height))
+            ratio = y / max(1, self.height - 1)
+            r = int(start[0] + (end[0] - start[0]) * ratio)
+            g = int(start[1] + (end[1] - start[1]) * ratio)
+            b = int(start[2] + (end[2] - start[2]) * ratio)
             draw.line([(0, y), (self.width, y)], fill=(r, g, b))
 
-        # Додаємо blur для smooth look
-        img = img.filter(ImageFilter.GaussianBlur(radius=20))
+        # Абстрактні світлові плями дають рух при частій зміні сцен.
+        overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
+        for index in range(3):
+            radius = self.width // (3 + index)
+            x = digest[6 + index] / 255 * self.width
+            y = digest[9 + index] / 255 * self.height
+            overlay_draw.ellipse(
+                (x - radius, y - radius, x + radius, y + radius),
+                fill=(255, 255, 255, 22 + index * 8)
+            )
+        overlay = overlay.filter(ImageFilter.GaussianBlur(radius=self.width // 10))
+        img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
 
         img.save(cache_path, quality=95)
         return cache_path
@@ -340,8 +409,16 @@ class VideoRenderer:
             # Зображення - робимо статичний clip
             clip = ImageClip(str(media_path), duration=duration)
 
-        # Resize до 1080x1920 (portrait)
-        clip = clip.resize((self.width, self.height))
+        # Aspect-fill без розтягування облич та предметів.
+        scale = max(self.width / clip.w, self.height / clip.h)
+        clip = clip.resize(scale)
+        clip = crop(
+            clip,
+            x_center=clip.w / 2,
+            y_center=clip.h / 2,
+            width=self.width,
+            height=self.height
+        )
 
         return clip
 
@@ -349,52 +426,23 @@ class VideoRenderer:
                      video_clip: VideoFileClip,
                      script_data: Dict,
                      duration: float) -> CompositeVideoClip:
-        """
-        Додавання субтитрів до відео
-
-        Розбиваємо текст на частини та показуємо як TikTok-стиль
-        """
-
-        full_text = script_data['full_script']
-
-        # Розбиваємо на речення
-        sentences = full_text.replace('\n\n', '. ').split('. ')
-        sentences = [s.strip() + '.' for s in sentences if s.strip()]
-
-        # Розраховуємо час для кожного речення
-        time_per_sentence = duration / len(sentences)
-
+        """Додати короткі caption-блоки, синхронізовані з Edge TTS."""
+        segments = self._build_caption_segments(script_data, duration)
         text_clips = []
+        caption_y = int(
+            self.height * float(os.getenv('CAPTION_Y_RATIO', 0.62))
+        )
 
-        for i, sentence in enumerate(sentences):
-            start_time = i * time_per_sentence
-
-            # Розбиваємо довгі речення на кілька рядків
-            words = sentence.split()
-            lines = []
-            current_line = []
-
-            for word in words:
-                current_line.append(word)
-                if len(' '.join(current_line)) > 30:  # Max 30 chars per line
-                    lines.append(' '.join(current_line))
-                    current_line = []
-
-            if current_line:
-                lines.append(' '.join(current_line))
-
-            text = '\n'.join(lines)
-
-            # Pillow-капшен не потребує ImageMagick у Docker/Render.
-            txt_clip = self._create_caption_clip(text)
-
-            txt_clip = txt_clip.set_position('center')
-            txt_clip = txt_clip.set_start(start_time)
-            txt_clip = txt_clip.set_duration(time_per_sentence)
-
-            # Додаємо fade in/out
-            txt_clip = fadein(txt_clip, 0.2)
-            txt_clip = fadeout(txt_clip, 0.2)
+        for segment in segments:
+            txt_clip = self._create_caption_clip(
+                segment['text'],
+                highlight_last=True
+            )
+            txt_clip = txt_clip.set_position(('center', caption_y))
+            txt_clip = txt_clip.set_start(segment['start'])
+            txt_clip = txt_clip.set_duration(segment['duration'])
+            txt_clip = fadein(txt_clip, 0.06)
+            txt_clip = fadeout(txt_clip, 0.06)
 
             text_clips.append(txt_clip)
 
@@ -403,16 +451,72 @@ class VideoRenderer:
 
         return final
 
-    def _create_caption_clip(self, text: str) -> ImageClip:
-        """Створити прозорий caption clip через Pillow."""
+    def _build_caption_segments(self, script_data: Dict, duration: float) -> List[Dict]:
+        """Побудувати 2-4-слівні caption-блоки з точними або оціненими таймінгами."""
+        words_per_caption = max(
+            2,
+            min(4, int(os.getenv('CAPTION_WORDS', 3)))
+        )
+        timings = [
+            timing for timing in script_data.get('word_timings', [])
+            if timing.get('text')
+        ]
+
+        if timings:
+            groups = [
+                timings[index:index + words_per_caption]
+                for index in range(0, len(timings), words_per_caption)
+            ]
+            segments = []
+            for index, group in enumerate(groups):
+                start = max(0.0, float(group[0].get('start', 0)))
+                if index + 1 < len(groups):
+                    end = float(groups[index + 1][0].get('start', start + 0.5))
+                else:
+                    last = group[-1]
+                    end = float(last.get('start', start)) + float(
+                        last.get('duration', 0.4)
+                    ) + 0.15
+
+                end = min(duration, max(start + 0.32, end))
+                if start >= duration:
+                    continue
+                segments.append({
+                    'text': ' '.join(item['text'] for item in group),
+                    'start': start,
+                    'duration': end - start
+                })
+            return segments
+
+        words = script_data.get('full_script', '').split()
+        if not words:
+            return []
+
+        seconds_per_word = duration / len(words)
+        segments = []
+        for index in range(0, len(words), words_per_caption):
+            group = words[index:index + words_per_caption]
+            start = index * seconds_per_word
+            end = min(duration, (index + len(group)) * seconds_per_word)
+            segments.append({
+                'text': ' '.join(group),
+                'start': start,
+                'duration': max(0.32, end - start)
+            })
+        return segments
+
+    def _create_caption_clip(self,
+                             text: str,
+                             highlight_last: bool = False) -> ImageClip:
+        """Створити читабельний caption із темною плашкою та жовтим акцентом."""
         font_paths = [
             os.getenv('CAPTION_FONT'),
             '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
             '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'
         ]
 
-        font_size = max(28, round(self.width * 60 / 1080))
-        stroke_width = max(2, round(self.width * 3 / 1080))
+        font_size = max(34, round(self.width * 76 / 1080))
+        stroke_width = max(2, round(self.width * 4 / 1080))
         font = None
         for font_path in font_paths:
             if font_path and Path(font_path).exists():
@@ -421,36 +525,70 @@ class VideoRenderer:
         if font is None:
             font = ImageFont.load_default()
 
-        lines = text.split('\n')
         probe = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
         draw = ImageDraw.Draw(probe)
-        line_spacing = 14
-        line_boxes = [
-            draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width)
-            for line in lines
-        ]
-        line_heights = [box[3] - box[1] for box in line_boxes]
-        total_height = sum(line_heights) + line_spacing * max(0, len(lines) - 1)
-        padding = 20
+
+        tokens = text.split()
+        lines = []
+        current_line = []
+        for token in tokens:
+            candidate = ' '.join(current_line + [token])
+            candidate_width = draw.textbbox((0, 0), candidate, font=font)[2]
+            if current_line and candidate_width > self.width * 0.82:
+                lines.append(current_line)
+                current_line = [token]
+            else:
+                current_line.append(token)
+        if current_line:
+            lines.append(current_line)
+
+        line_height = draw.textbbox((0, 0), 'Аgj', font=font)[3]
+        line_spacing = max(8, font_size // 4)
+        total_height = len(lines) * line_height + max(0, len(lines) - 1) * line_spacing
+        padding_x = max(18, font_size // 2)
+        padding_y = max(12, font_size // 3)
         image = Image.new(
             'RGBA',
-            (self.width, total_height + padding * 2),
+            (self.width, total_height + padding_y * 2),
             (0, 0, 0, 0)
         )
         draw = ImageDraw.Draw(image)
-        y = padding
+        line_widths = [
+            draw.textbbox((0, 0), ' '.join(line), font=font)[2]
+            for line in lines
+        ]
+        box_width = min(self.width - 12, max(line_widths, default=0) + padding_x * 2)
+        box_left = (self.width - box_width) // 2
+        draw.rounded_rectangle(
+            (box_left, 0, box_left + box_width, image.height),
+            radius=max(12, font_size // 2),
+            fill=(0, 0, 0, 165)
+        )
 
-        for line, box, line_height in zip(lines, line_boxes, line_heights):
-            line_width = box[2] - box[0]
+        y = padding_y
+        token_index = 0
+        last_token_index = max(0, len(tokens) - 1)
+        space_width = draw.textbbox((0, 0), ' ', font=font)[2]
+
+        for line, line_width in zip(lines, line_widths):
             x = (self.width - line_width) // 2
-            draw.text(
-                (x, y),
-                line,
-                font=font,
-                fill='white',
-                stroke_width=stroke_width,
-                stroke_fill='black'
-            )
+            for token in line:
+                fill = (
+                    '#FFD54A'
+                    if highlight_last and token_index == last_token_index
+                    else 'white'
+                )
+                draw.text(
+                    (x, y),
+                    token,
+                    font=font,
+                    fill=fill,
+                    stroke_width=stroke_width,
+                    stroke_fill='black'
+                )
+                token_width = draw.textbbox((0, 0), token, font=font)[2]
+                x += token_width + space_width
+                token_index += 1
             y += line_height + line_spacing
 
         return ImageClip(np.array(image), transparent=True)

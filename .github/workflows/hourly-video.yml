@@ -1,0 +1,121 @@
+name: Generate and upload hourly video
+
+on:
+  schedule:
+    - cron: '5 6-23 * * *'
+      timezone: 'Europe/Kyiv'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hourly-youtube-generation
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+
+    steps:
+      - name: Wake Render and start one video
+        id: start
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app_url="https://youtube-automation-zoiy.onrender.com"
+          response_file="$(mktemp)"
+          http_code="$(
+            curl --silent --show-error \
+              --retry 6 \
+              --retry-delay 10 \
+              --retry-all-errors \
+              --connect-timeout 30 \
+              --max-time 300 \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header 'Content-Type: application/json' \
+              --data '{"count":1}' \
+              "$app_url/api/generate"
+          )"
+
+          cat "$response_file"
+
+          if [[ "$http_code" != "202" && "$http_code" != "409" ]]; then
+            echo "Generation request failed with HTTP $http_code" >&2
+            exit 1
+          fi
+
+          job_id="$(jq -r '.job_id // empty' "$response_file")"
+          if [[ -z "$job_id" ]]; then
+            echo "Render did not return a generation job ID" >&2
+            exit 1
+          fi
+
+          echo "app_url=$app_url" >> "$GITHUB_OUTPUT"
+          echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
+
+      - name: Keep Render awake until upload finishes
+        shell: bash
+        env:
+          APP_URL: ${{ steps.start.outputs.app_url }}
+          JOB_ID: ${{ steps.start.outputs.job_id }}
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 180); do
+            sleep 30
+
+            response_file="$(mktemp)"
+            http_code="$(
+              curl --silent --show-error \
+                --retry 3 \
+                --retry-delay 5 \
+                --retry-all-errors \
+                --connect-timeout 30 \
+                --max-time 120 \
+                --output "$response_file" \
+                --write-out '%{http_code}' \
+                "$APP_URL/api/generate/$JOB_ID"
+            )"
+
+            if [[ "$http_code" != "200" ]]; then
+              echo "Status check $attempt returned HTTP $http_code"
+              cat "$response_file"
+              continue
+            fi
+
+            status="$(jq -r '.status // "unknown"' "$response_file")"
+            echo "Status check $attempt: $status"
+
+            if [[ "$status" == "failed" ]]; then
+              cat "$response_file"
+              exit 1
+            fi
+
+            if [[ "$status" == "completed" ]]; then
+              cat "$response_file"
+
+              upload_error="$(jq -r '[.videos[]?.upload_error // empty] | join("; ")' "$response_file")"
+              youtube_url="$(jq -r '.videos[0].url // empty' "$response_file")"
+
+              if [[ -n "$upload_error" ]]; then
+                echo "YouTube upload failed: $upload_error" >&2
+                exit 1
+              fi
+
+              if [[ -z "$youtube_url" ]]; then
+                echo "Video was generated, but AUTO_UPLOAD is not active or YouTube is not connected" >&2
+                exit 1
+              fi
+
+              echo "Uploaded successfully: $youtube_url"
+              exit 0
+            fi
+          done
+
+          echo "Generation did not finish within 90 minutes" >&2
+          exit 1

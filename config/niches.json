@@ -224,14 +224,149 @@
           "cta": "Не пропусти наступні інструменти!"
         }
       ]
+    },
+    {
+      "id": "fun_facts",
+      "name": "Дивні та смішні факти",
+      "description": "Неочікувані правдиві факти з легким гумором і сильним фіналом",
+      "target_cpm": 2.8,
+      "voice": "Polina",
+      "keywords": [
+        "fun facts",
+        "weird facts",
+        "did you know",
+        "interesting",
+        "surprising",
+        "science",
+        "curiosity",
+        "shorts"
+      ],
+      "video_themes": [
+        "surprised person reaction",
+        "strange animal behavior",
+        "science experiment close up",
+        "unusual everyday objects",
+        "funny human reaction",
+        "mystery discovery"
+      ],
+      "content_templates": [
+        {
+          "type": "weird_true_fact",
+          "hook_template": "Це звучить як жарт, але це правда...",
+          "body_structure": "дивний факт → коротке пояснення → неочікувана деталь",
+          "cta": "Завтра буде ще дивніше — підпишись"
+        },
+        {
+          "type": "three_fast_facts",
+          "hook_template": "Три факти, які зламають твою логіку",
+          "body_structure": "факт 1 → факт 2 → найсильніший факт 3",
+          "cta": "Який факт здивував найбільше?"
+        },
+        {
+          "type": "myth_vs_reality",
+          "hook_template": "Ти все життя вірив у цей міф",
+          "body_structure": "поширений міф → що насправді → смішний висновок",
+          "cta": "Перевіримо ще один міф у наступному відео"
+        }
+      ]
+    },
+    {
+      "id": "everyday_humor",
+      "name": "Життєві приколи та ситуації",
+      "description": "Впізнавані побутові ситуації, короткі жарти та самоіронія без образ",
+      "target_cpm": 2.2,
+      "voice": "Ostap",
+      "keywords": [
+        "humor",
+        "relatable",
+        "funny",
+        "daily life",
+        "ukrainian humor",
+        "comedy",
+        "life situations",
+        "shorts"
+      ],
+      "video_themes": [
+        "funny phone reaction",
+        "awkward office moment",
+        "friends laughing together",
+        "confused person at home",
+        "funny shopping situation",
+        "morning alarm reaction"
+      ],
+      "content_templates": [
+        {
+          "type": "relatable_situation",
+          "hook_template": "У кожного є друг, який робить саме це",
+          "body_structure": "знайома ситуація → перебільшення → короткий панчлайн",
+          "cta": "Надішли тому самому другу"
+        },
+        {
+          "type": "expectation_vs_reality",
+          "hook_template": "Очікування було красивим. Реальність — ні",
+          "body_structure": "очікування → різкий контраст → самоіронічний фінал",
+          "cta": "У тебе теж так було?"
+        },
+        {
+          "type": "mini_story",
+          "hook_template": "Я зрозумів, що день буде дивним, коли...",
+          "body_structure": "сетап → ескалація → безпечний панчлайн",
+          "cta": "Підпишись на наступну життєву серію"
+        }
+      ]
+    },
+    {
+      "id": "psychology",
+      "name": "Психологія та стосунки",
+      "description": "Побутова психологія, спілкування та впізнавані соціальні ситуації",
+      "target_cpm": 3.4,
+      "voice": "Polina",
+      "keywords": [
+        "psychology",
+        "relationships",
+        "communication",
+        "body language",
+        "social skills",
+        "behavior",
+        "emotions",
+        "shorts"
+      ],
+      "video_themes": [
+        "friends talking cafe",
+        "couple conversation",
+        "person thinking alone",
+        "body language conversation",
+        "social awkward moment",
+        "happy friends outdoors"
+      ],
+      "content_templates": [
+        {
+          "type": "behavior_explained",
+          "hook_template": "Ось чому люди раптом перестають відповідати",
+          "body_structure": "знайома поведінка → просте пояснення → корисна дія",
+          "cta": "Більше психології без нудних термінів"
+        },
+        {
+          "type": "conversation_tip",
+          "hook_template": "Одна фраза одразу змінює розмову",
+          "body_structure": "помилка → краща фраза → приклад → результат",
+          "cta": "Збережи перед наступною розмовою"
+        },
+        {
+          "type": "social_myth",
+          "hook_template": "Ця популярна порада про стосунки не працює",
+          "body_structure": "порада → чому не працює → здорова альтернатива",
+          "cta": "Розберемо наступний міф завтра"
+        }
+      ]
     }
   ],
 
   "global_settings": {
-    "min_duration_seconds": 45,
-    "max_duration_seconds": 55,
-    "target_hook_seconds": 3,
-    "target_cta_seconds": 5,
+    "min_duration_seconds": 25,
+    "max_duration_seconds": 38,
+    "target_hook_seconds": 1,
+    "target_cta_seconds": 3,
     "words_per_second": 2.5,
     "preferred_aspect_ratio": "9:16",
     "video_resolution": "1080x1920"

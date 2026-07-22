@@ -103,6 +103,13 @@ class VideoProducer:
             logger.info(f"  Аудіо: {audio_result['audio_path'].name}")
             logger.info(f"  Голос: {audio_result['voice_used']}")
 
+            # Edge TTS повертає точні межі слів. Renderer використовує їх для
+            # коротких синхронних caption-блоків; gTTS працює через fallback.
+            script['word_timings'] = audio_result.get('word_timings', [])
+            script['estimated_duration'] = audio_result.get(
+                'duration', script['estimated_duration']
+            )
+
             # 3. РЕНДЕРИНГ ВІДЕО
             logger.info("Step 3/5: Rendering video...")
             video_result = self.video_render.create_video(

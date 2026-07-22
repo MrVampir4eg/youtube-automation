@@ -49,6 +49,16 @@ class FreeContentGenerator:
         self.niches = {n['id']: n for n in self.config['niches']}
         self.global_settings = self.config['global_settings']
 
+        configured_niches = [
+            niche_id.strip()
+            for niche_id in os.getenv('CONTENT_NICHES', '').split(',')
+            if niche_id.strip()
+        ]
+        self.enabled_niche_ids = [
+            niche_id for niche_id in configured_niches
+            if niche_id in self.niches
+        ] or list(self.niches.keys())
+
     def _get_default_config(self):
         """Дефолтна конфігурація якщо файл не знайдено"""
         return {
@@ -74,7 +84,7 @@ class FreeContentGenerator:
         if niche_id and niche_id in self.niches:
             niche = self.niches[niche_id]
         else:
-            niche = random.choice(list(self.niches.values()))
+            niche = self.niches[random.choice(self.enabled_niche_ids)]
 
         # Генерація через обраний провайдер
         if self.provider == 'groq':
@@ -129,12 +139,16 @@ class FreeContentGenerator:
                 'niche_name': niche['name'],
                 'hook': parsed['hook'],
                 'body': parsed['body'],
+                'payoff': parsed['payoff'],
                 'cta': parsed['cta'],
                 'full_script': parsed['full_script'],
                 'estimated_duration': self._estimate_duration(parsed['full_script']),
                 'voice': niche.get('voice', 'uk'),
                 'keywords': niche.get('keywords', []),
                 'video_themes': niche.get('video_themes', ['generic']),
+                'visual_queries': parsed['visual_queries'] or niche.get(
+                    'video_themes', ['generic']
+                ),
                 'metadata': {
                     'generated_at': datetime.utcnow().isoformat(),
                     'provider': 'groq',
@@ -189,12 +203,16 @@ class FreeContentGenerator:
                 'niche_name': niche['name'],
                 'hook': parsed['hook'],
                 'body': parsed['body'],
+                'payoff': parsed['payoff'],
                 'cta': parsed['cta'],
                 'full_script': parsed['full_script'],
                 'estimated_duration': self._estimate_duration(parsed['full_script']),
                 'voice': niche.get('voice', 'uk'),
                 'keywords': niche.get('keywords', []),
                 'video_themes': niche.get('video_themes', ['generic']),
+                'visual_queries': parsed['visual_queries'] or niche.get(
+                    'video_themes', ['generic']
+                ),
                 'metadata': {
                     'generated_at': datetime.utcnow().isoformat(),
                     'provider': 'together',
@@ -229,6 +247,30 @@ class FreeContentGenerator:
                     'body': 'Гроші - це не мета, це інструмент. Багаті люди заробляють гроші не заради грошей, а заради свободи. Свободи вибору. Свободи часу. Свободи життя.',
                     'cta': 'Підпишись для фінансових інсайтів!'
                 }
+            ],
+            'fun_facts': [
+                {
+                    'hook': 'Восьминіг має три серця.',
+                    'body': 'Два з них качають кров до зябер, а третє — до решти тіла. Найдивніше: коли восьминіг пливе, головне серце тимчасово перестає працювати.',
+                    'payoff': 'Тому він частіше повзає — так банально легше жити.',
+                    'cta': 'Завтра буде ще дивніше.'
+                }
+            ],
+            'everyday_humor': [
+                {
+                    'hook': 'Будильник о сьомій — це переговори.',
+                    'body': 'Перша кнопка «відкласти» означає: я почув вашу пропозицію. Друга: потрібен час подумати. Третя: наша співпраця сьогодні неможлива.',
+                    'payoff': 'А потім ти прокидаєшся керівником відділу запізнень.',
+                    'cta': 'Надішли це своєму сонному другу.'
+                }
+            ],
+            'psychology': [
+                {
+                    'hook': 'Пауза робить відповідь сильнішою.',
+                    'body': 'Коли тебе провокують, не відповідай миттєво. Дві спокійні секунди зменшують емоцію і дають обрати слова, про які не доведеться шкодувати.',
+                    'payoff': 'Контроль — це не мовчання, а правильний момент.',
+                    'cta': 'Збережи перед складною розмовою.'
+                }
             ]
         }
 
@@ -236,19 +278,26 @@ class FreeContentGenerator:
         available = templates.get(niche_id, templates['motivation'])
         template = random.choice(available)
 
-        full_script = f"{template['hook']}\n\n{template['body']}\n\n{template['cta']}"
+        payoff = template.get('payoff', '')
+        full_script = ' '.join(
+            part for part in (
+                template['hook'], template['body'], payoff, template['cta']
+            ) if part
+        )
 
         return {
             'niche': niche_id,
             'niche_name': niche['name'],
             'hook': template['hook'],
             'body': template['body'],
+            'payoff': payoff,
             'cta': template['cta'],
             'full_script': full_script,
             'estimated_duration': self._estimate_duration(full_script),
             'voice': niche.get('voice', 'uk'),
             'keywords': niche.get('keywords', []),
             'video_themes': niche.get('video_themes', ['generic']),
+            'visual_queries': niche.get('video_themes', ['generic']),
             'metadata': {
                 'generated_at': datetime.utcnow().isoformat(),
                 'provider': 'fallback',
@@ -259,23 +308,36 @@ class FreeContentGenerator:
 
     def _build_prompt(self, niche: Dict) -> str:
         """Побудова промпту"""
-        return f"""Створи захоплюючий скрипт для YouTube Shorts на тему "{niche['name']}".
+        templates = niche.get('content_templates', [])
+        template_hint = random.choice(templates) if templates else {}
+
+        return f"""Створи оригінальний сценарій для українського YouTube Shorts на тему "{niche['name']}".
 
 ВИМОГИ:
-- Тривалість: 45-55 секунд (110-140 слів)
+- Тривалість: 25-38 секунд (70-95 слів)
 - Мова: Українська
-- Стиль: Динамічний, захоплюючий
+- Стиль: edutainment — динамічно, зрозуміло, з легкою іронією або неочікуваним поворотом
+- Не вигадуй факти, статистику, цитати або особистий досвід
+- Без привітання, вступу, канцеляризмів та порожніх фраз
+- Не повторюй банальні формулювання на кшталт "про це ніхто не говорить"
+- Орієнтир формату: {template_hint.get('type', 'коротка цікава історія')}
 
 СТРУКТУРА:
 
-HOOK (перші 3-5 секунд):
-Має МОМЕНТАЛЬНО захопити увагу
+HOOK (перша секунда, максимум 8 слів):
+Конкретний шок, конфлікт, запитання або дивний факт. Одразу обіцяє результат.
 
 BODY (основна частина):
-Цікаві факти, історія, корисна інформація
+3-5 коротких фраз. Кожна просуває історію вперед. Додай одну зміну очікування.
 
-CTA (останні 3-5 секунд):
-Заклик до підписки
+PAYOFF:
+Чітка відповідь, висновок або панчлайн, який виконує обіцянку HOOK.
+
+CTA (максимум 7 слів):
+Конкретна причина підписатися або дочекатися наступної частини. Без благання.
+
+VISUALS:
+6 коротких англомовних пошукових фраз для стокових вертикальних відео. Конкретні об'єкти й дії, через кому.
 
 ФОРМАТ ВІДПОВІДІ:
 
@@ -285,8 +347,14 @@ HOOK:
 BODY:
 [текст]
 
+PAYOFF:
+[текст]
+
 CTA:
 [текст]
+
+VISUALS:
+[query 1, query 2, query 3, query 4, query 5, query 6]
 
 Створи скрипт ЗАРАЗ:"""
 
@@ -294,7 +362,9 @@ CTA:
         """Парсинг AI відповіді"""
         hook = ""
         body = ""
+        payoff = ""
         cta = ""
+        visuals = ""
         current_section = None
 
         for line in content.split('\n'):
@@ -306,24 +376,43 @@ CTA:
             elif line.upper().startswith('BODY:'):
                 current_section = 'body'
                 body = line[5:].strip()
+            elif line.upper().startswith('PAYOFF:'):
+                current_section = 'payoff'
+                payoff = line[7:].strip()
             elif line.upper().startswith('CTA:'):
                 current_section = 'cta'
                 cta = line[4:].strip()
+            elif line.upper().startswith('VISUALS:'):
+                current_section = 'visuals'
+                visuals = line[8:].strip()
             elif line and current_section:
                 if current_section == 'hook':
                     hook += ' ' + line
                 elif current_section == 'body':
                     body += ' ' + line
+                elif current_section == 'payoff':
+                    payoff += ' ' + line
                 elif current_section == 'cta':
                     cta += ' ' + line
+                elif current_section == 'visuals':
+                    visuals += ' ' + line
 
-        full_script = f"{hook}\n\n{body}\n\n{cta}"
+        full_script = ' '.join(
+            part.strip() for part in (hook, body, payoff, cta) if part.strip()
+        )
+        visual_queries = [
+            query.strip().strip('[]-')
+            for query in visuals.split(',')
+            if query.strip().strip('[]-')
+        ][:8]
 
         return {
             'hook': hook.strip(),
             'body': body.strip(),
+            'payoff': payoff.strip(),
             'cta': cta.strip(),
-            'full_script': full_script.strip()
+            'full_script': full_script.strip(),
+            'visual_queries': visual_queries
         }
 
     def _estimate_duration(self, text: str) -> int:
@@ -334,16 +423,17 @@ CTA:
 
     def generate_seo_metadata(self, script: Dict) -> Dict:
         """Генерація SEO метаданих"""
-        hook = script['hook'][:50]
+        hook = script['hook'].strip().rstrip('.')
         niche = script['niche_name']
 
-        title = f"{hook}... | {niche}"
-        if len(title) > 100:
-            title = title[:97] + "..."
+        title = hook if len(hook) >= 32 else f"{hook} — {niche}"
+        title = title[:90].rstrip()
 
         description = f"""🔥 {script['hook']}
 
-{script['body'][:200]}...
+{script['body'][:220]}
+
+{script.get('payoff', '')}
 
 💡 {script['cta']}
 

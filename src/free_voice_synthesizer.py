@@ -1,8 +1,6 @@
-"""
-FREE Voice Synthesizer - використовує Google Text-to-Speech (БЕЗКОШТОВНО!)
-gTTS - якісна озвучка без API ключів
-"""
+"""Безкоштовна нейронна озвучка з надійним gTTS fallback."""
 
+import asyncio
 import os
 import logging
 from pathlib import Path
@@ -10,11 +8,16 @@ from typing import Dict
 from gtts import gTTS
 import time
 
+try:
+    import edge_tts
+except ImportError:  # gTTS лишається резервним провайдером
+    edge_tts = None
+
 logger = logging.getLogger(__name__)
 
 
 class FreeVoiceSynthesizer:
-    """Безкоштовний синтезатор мови через gTTS"""
+    """Нейронний Microsoft Edge TTS з автоматичним fallback на gTTS."""
 
     def __init__(self):
         # Директорія для збереження
@@ -28,7 +31,13 @@ class FreeVoiceSynthesizer:
             'ru': 'ru',  # Російська
         }
 
-        logger.info("✓ FREE Voice Synthesizer initialized (gTTS)")
+        self.provider = os.getenv('FREE_TTS_PROVIDER', 'edge').lower()
+        self.edge_rate = os.getenv('EDGE_TTS_RATE', '+8%')
+        self.edge_pitch = os.getenv('EDGE_TTS_PITCH', '+0Hz')
+        self.edge_voice = os.getenv('EDGE_TTS_VOICE', '').strip()
+
+        selected = 'Edge Neural TTS' if self.provider == 'edge' else 'gTTS'
+        logger.info(f"✓ FREE Voice Synthesizer initialized ({selected})")
 
     def synthesize(self,
                    text: str,
@@ -54,10 +63,113 @@ class FreeVoiceSynthesizer:
             }
         """
 
-        lang_code = self.languages.get(language, 'uk')
         chars_count = len(text)
 
-        logger.info(f"Synthesizing audio: {chars_count} chars, language: {lang_code}")
+        logger.info(f"Synthesizing audio: {chars_count} chars, language: {language}")
+
+        if self.provider == 'edge' and edge_tts is not None:
+            try:
+                return self._synthesize_edge(
+                    text=text,
+                    niche=niche,
+                    video_id=video_id,
+                    language=language
+                )
+            except Exception as exc:
+                logger.warning(f"Edge TTS failed, falling back to gTTS: {exc}")
+
+        return self._synthesize_gtts(
+            text=text,
+            video_id=video_id,
+            language=language
+        )
+
+    def _select_edge_voice(self, niche: str, language: str) -> str:
+        """Обрати природний голос; можна перевизначити через EDGE_TTS_VOICE."""
+        if self.edge_voice:
+            return self.edge_voice
+
+        if language == 'uk':
+            if niche in {'everyday_humor', 'tech', 'productivity'}:
+                return 'uk-UA-OstapNeural'
+            return 'uk-UA-PolinaNeural'
+        if language == 'en':
+            return 'en-US-EmmaMultilingualNeural'
+        if language == 'ru':
+            return 'ru-RU-SvetlanaNeural'
+        return 'uk-UA-PolinaNeural'
+
+    def _synthesize_edge(self,
+                         text: str,
+                         niche: str,
+                         video_id: str,
+                         language: str) -> Dict:
+        """Створити MP3 і точні межі слів для динамічних субтитрів."""
+        start_time = time.time()
+        audio_path = self.output_dir / f"{video_id}.mp3"
+        voice = self._select_edge_voice(niche, language)
+
+        async def stream_audio():
+            word_timings = []
+            communicator = edge_tts.Communicate(
+                text,
+                voice,
+                rate=self.edge_rate,
+                pitch=self.edge_pitch,
+                boundary='WordBoundary'
+            )
+
+            with audio_path.open('wb') as audio_file:
+                async for chunk in communicator.stream():
+                    if chunk['type'] == 'audio':
+                        audio_file.write(chunk['data'])
+                    elif chunk['type'] == 'WordBoundary':
+                        word_timings.append({
+                            'text': chunk.get('text', '').strip(),
+                            'start': float(chunk.get('offset', 0)) / 10_000_000,
+                            'duration': float(chunk.get('duration', 0)) / 10_000_000
+                        })
+
+            return [timing for timing in word_timings if timing['text']]
+
+        try:
+            word_timings = asyncio.run(stream_audio())
+        except Exception:
+            audio_path.unlink(missing_ok=True)
+            raise
+
+        if not audio_path.exists() or audio_path.stat().st_size == 0:
+            raise RuntimeError('Edge TTS returned an empty audio file')
+
+        duration = (
+            word_timings[-1]['start'] + word_timings[-1]['duration']
+            if word_timings else (len(text.split()) / 165) * 60
+        )
+        generation_time = time.time() - start_time
+
+        logger.info(
+            f"✓ Neural audio generated: {audio_path.name}, "
+            f"~{duration:.1f}s, voice={voice}, COST: $0"
+        )
+
+        return {
+            'audio_path': audio_path,
+            'duration': duration,
+            'chars_used': len(text),
+            'voice_used': voice,
+            'word_timings': word_timings,
+            'generation_time': generation_time,
+            'cost': 0.0,
+            'provider': 'edge-tts'
+        }
+
+    def _synthesize_gtts(self,
+                         text: str,
+                         video_id: str,
+                         language: str) -> Dict:
+        """Резервна озвучка, якщо Edge TTS тимчасово недоступний."""
+        lang_code = self.languages.get(language, 'uk')
+        chars_count = len(text)
 
         try:
             start_time = time.time()
@@ -92,6 +204,7 @@ class FreeVoiceSynthesizer:
                 'duration': estimated_duration,
                 'chars_used': chars_count,
                 'voice_used': f'gTTS-{lang_code}',
+                'word_timings': [],
                 'generation_time': generation_time,
                 'cost': 0.0,  # БЕЗКОШТОВНО!
                 'provider': 'gTTS'
@@ -127,7 +240,7 @@ class FreeVoiceSynthesizer:
     def get_usage_stats(self) -> Dict:
         """Статистика використання"""
         return {
-            'provider': 'gTTS',
+            'provider': 'Edge Neural TTS + gTTS fallback',
             'cost': 0.0,
             'cost_per_video': 0.0,
             'monthly_cost': 0.0,
@@ -139,7 +252,7 @@ class FreeVoiceSynthesizer:
         return {
             'chars': len(text),
             'estimated_cost': 0.0,
-            'provider': 'gTTS (Google Text-to-Speech)',
+            'provider': 'Edge Neural TTS / gTTS fallback',
             'note': 'БЕЗКОШТОВНО!'
         }
 
