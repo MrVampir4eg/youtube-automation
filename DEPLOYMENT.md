@@ -85,7 +85,7 @@ git push -u origin main
    Branch: main
    Runtime: Python 3
    Build Command: pip install -r requirements.txt
-   Start Command: python dashboard/app.py
+   Start Command: python -m dashboard.app
    Instance Type: Free
    ```
 4. Натисніть **"Create Web Service"**

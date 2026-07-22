@@ -301,7 +301,7 @@ File size: 15.2MB
 ### Запуск Dashboard
 
 ```bash
-python dashboard/app.py
+python -m dashboard.app
 ```
 
 **Відкрийте в браузері:** http://localhost:5000
@@ -319,7 +319,7 @@ python dashboard/app.py
 ### Запуск з Автоматичною Генерацією
 
 ```bash
-python dashboard/app.py
+python -m dashboard.app
 ```
 
 Scheduler автоматично запуститься і буде:
@@ -404,7 +404,7 @@ railway open
 
 4. Налаштування:
    - Build Command: `pip install -r requirements.txt`
-   - Start Command: `python dashboard/app.py`
+   - Start Command: `python -m dashboard.app`
 
 5. Додайте Environment Variables в Render dashboard
 
@@ -455,7 +455,7 @@ Type=simple
 User=root
 WorkingDirectory=/root/youtube-automation
 Environment="PATH=/root/youtube-automation/venv/bin"
-ExecStart=/root/youtube-automation/venv/bin/python dashboard/app.py
+ExecStart=/root/youtube-automation/venv/bin/python -m dashboard.app
 Restart=always
 
 [Install]
@@ -595,9 +595,9 @@ VIDEO_FPS=30
 
 Запустіть окремі інстанси:
 ```bash
-python dashboard/app.py --config .env.channel1 --port 5001
-python dashboard/app.py --config .env.channel2 --port 5002
-python dashboard/app.py --config .env.channel3 --port 5003
+python -m dashboard.app --config .env.channel1 --port 5001
+python -m dashboard.app --config .env.channel2 --port 5002
+python -m dashboard.app --config .env.channel3 --port 5003
 ```
 
 ---

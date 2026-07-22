@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y \
 # Робоча директорія
 WORKDIR /app
 
+# Дозволяє запускати dashboard і імпортувати сусідні пакети src/database
+ENV PYTHONPATH=/app
+
 # Копіюємо requirements
 COPY requirements.txt .
 
@@ -28,9 +31,9 @@ RUN mkdir -p output/videos output/audio output/temp output/video_cache database
 # Expose порт
 EXPOSE 5000
 
-#Healthcheck
+# Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD python -c "import requests; requests.get('http://localhost:5000/health')"
+  CMD python -c "import os, requests; requests.get('http://localhost:' + os.getenv('PORT', os.getenv('FLASK_PORT', '5000')) + '/health', timeout=5).raise_for_status()"
 
 # Запуск
-CMD ["python", "dashboard/app.py"]
+CMD ["python", "-m", "dashboard.app"]

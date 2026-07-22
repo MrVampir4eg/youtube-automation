@@ -52,7 +52,7 @@ echo "3. Виберіть 'Deploy from GitHub' або завантажте цю 
 echo ""
 echo "4. Налаштування:"
 echo "   Build Command: pip install -r requirements-free.txt"
-echo "   Start Command: python dashboard/app.py"
+echo "   Start Command: python -m dashboard.app"
 echo "   Instance Type: Free"
 echo ""
 echo "5. Environment Variables (СКОПІЮЙТЕ ЦІ):"

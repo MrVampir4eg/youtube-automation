@@ -19,6 +19,7 @@ pydub==0.25.1
 
 # Audio/Voice
 elevenlabs==1.2.0
+gTTS==2.5.1
 
 # Database
 sqlalchemy==2.0.30

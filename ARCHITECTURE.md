@@ -382,7 +382,7 @@ SECRET_KEY=random-generated-key
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python dashboard/app.py
+python -m dashboard.app
 ```
 
 ### Фаза 2: Cloud Deployment (Тиждень 2)

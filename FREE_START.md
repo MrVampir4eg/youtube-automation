@@ -158,7 +158,7 @@ git push -u origin main
 # - New + → Web Service
 # - Connect GitHub repo
 # - Build: pip install -r requirements-free.txt
-# - Start: python dashboard/app.py
+# - Start: python -m dashboard.app
 # - Instance: Free
 
 # 3. Додайте Environment Variables з .env
@@ -175,7 +175,7 @@ git push -u origin main
 
 ```bash
 # Запуск dashboard
-python dashboard/app.py
+python -m dashboard.app
 
 # Відкрийте: http://localhost:5000
 ```
@@ -185,7 +185,7 @@ python dashboard/app.py
 ## 📊 Що ви отримуєте БЕЗКОШТОВНО:
 
 ### 1. AI Генерація скриптів (Groq)
-- **Модель:** llama-3.1-70b-versatile
+- **Модель:** llama-3.3-70b-versatile
 - **Якість:** Краща за GPT-3.5
 - **Швидкість:** 2-3 сек
 - **Ліміт:** ~14,000 запитів/день

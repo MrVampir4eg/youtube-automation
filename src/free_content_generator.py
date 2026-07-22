@@ -20,7 +20,7 @@ class FreeContentGenerator:
     def __init__(self):
         # Groq API - БЕЗКОШТОВНО! https://groq.com/
         self.groq_api_key = os.getenv('GROQ_API_KEY', '')
-        self.groq_model = 'llama-3.1-70b-versatile'
+        self.groq_model = 'llama-3.3-70b-versatile'
 
         # Together AI - БЕЗКОШТОВНО! https://together.ai/
         self.together_api_key = os.getenv('TOGETHER_API_KEY', '')
@@ -363,6 +363,15 @@ CTA:
             'description': description,
             'tags': tags[:10],
             'category_id': '22'
+        }
+
+    def get_daily_stats(self) -> Dict:
+        """Статистика у форматі, сумісному з оркестратором."""
+        return {
+            'provider': self.provider,
+            'model': self.groq_model if self.provider == 'groq' else self.provider,
+            'tokens_used': 0,
+            'daily_cost': 0.0
         }
 
 

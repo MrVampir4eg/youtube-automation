@@ -62,7 +62,7 @@ Build Command:
 pip install -r requirements-free.txt
 
 Start Command:
-python dashboard/app.py
+python -m dashboard.app
 
 Instance Type: Free
 ```

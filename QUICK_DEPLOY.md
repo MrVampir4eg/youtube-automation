@@ -56,7 +56,7 @@ Name: youtube-automation
 Region: Frankfurt
 Runtime: Python 3
 Build Command: pip install -r requirements-free.txt
-Start Command: python dashboard/app.py
+Start Command: python -m dashboard.app
 Instance Type: Free (безкоштовно!)
 ```
 

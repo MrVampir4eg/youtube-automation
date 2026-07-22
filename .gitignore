@@ -108,7 +108,5 @@ node_modules/
 npm-debug.log
 yarn-error.log
 
-# Docker
-.dockerignore
-.env.production
+# Production secrets
 .env.production

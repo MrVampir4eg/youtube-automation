@@ -39,11 +39,15 @@ class YouTubeUploader:
         self.token_file = Path('config/youtube_token.pickle')
 
         self.youtube = None
-        self._authenticate()
 
         # Статистика
         self.videos_uploaded_today = 0
         self.total_uploads = 0
+
+    def _ensure_authenticated(self):
+        """Lazy OAuth: не блокує запуск вебсервера без YouTube credentials."""
+        if self.youtube is None:
+            self._authenticate()
 
     def _authenticate(self):
         """OAuth 2.0 авторизація"""
@@ -125,6 +129,8 @@ class YouTubeUploader:
                 'published_at': datetime.utcnow().isoformat(),
                 'test_mode': True
             }
+
+        self._ensure_authenticated()
 
         logger.info(f"Uploading video: {video_path.name}")
         logger.info(f"Title: {title[:50]}...")
@@ -209,6 +215,8 @@ class YouTubeUploader:
                     tags: Optional[list] = None) -> Dict:
         """Оновлення метаданих відео"""
 
+        self._ensure_authenticated()
+
         try:
             # Спочатку отримуємо поточні дані
             current = self.youtube.videos().list(
@@ -253,6 +261,8 @@ class YouTubeUploader:
     def get_video_analytics(self, video_id: str) -> Dict:
         """Отримання статистики відео"""
 
+        self._ensure_authenticated()
+
         try:
             response = self.youtube.videos().list(
                 part='statistics,snippet,contentDetails',
@@ -283,6 +293,8 @@ class YouTubeUploader:
     def get_channel_info(self) -> Dict:
         """Інформація про канал"""
 
+        self._ensure_authenticated()
+
         try:
             response = self.youtube.channels().list(
                 part='snippet,statistics,contentDetails',
@@ -311,6 +323,8 @@ class YouTubeUploader:
 
     def list_my_videos(self, max_results: int = 50) -> list:
         """Список моїх відео"""
+
+        self._ensure_authenticated()
 
         try:
             # Спочатку отримуємо uploads playlist ID
@@ -345,6 +359,8 @@ class YouTubeUploader:
 
     def delete_video(self, video_id: str) -> bool:
         """Видалення відео (будьте обережні!)"""
+
+        self._ensure_authenticated()
 
         try:
             self.youtube.videos().delete(id=video_id).execute()

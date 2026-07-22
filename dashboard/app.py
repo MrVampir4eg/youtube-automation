@@ -174,8 +174,10 @@ def health():
 
 
 if __name__ == '__main__':
-    port = int(os.getenv('FLASK_PORT', 5000))
-    debug = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
+    # Render/Railway передають порт у PORT. FLASK_PORT лишається
+    # резервним варіантом для локального запуску.
+    port = int(os.getenv('PORT', os.getenv('FLASK_PORT', 5000)))
+    debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
 
     print("\n" + "="*60)
     print("YouTube Shorts Automation Dashboard")

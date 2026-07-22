@@ -34,7 +34,7 @@ cd C:\Users\Цепеш\AppData\Local\Claude-3p\local-agent-mode-sessions\68e770b
 pip install -r requirements-free.txt
 
 # 3. Запустіть
-python dashboard/app.py
+python -m dashboard.app
 ```
 
 **Dashboard буде на:** http://localhost:5000

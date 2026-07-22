@@ -77,7 +77,7 @@ git push -u origin main
    Region: Frankfurt
    Branch: main
    Build Command: pip install -r requirements-free.txt
-   Start Command: python dashboard/app.py
+   Start Command: python -m dashboard.app
    Instance Type: Free
 
 6. Environment Variables (скопіюйте з .env.production):
@@ -194,7 +194,7 @@ pip install -r requirements-free.txt
 cp .env.production .env
 
 # 4. Запустіть
-python dashboard/app.py
+python -m dashboard.app
 
 # 5. Відкрийте: http://localhost:5000
 ```

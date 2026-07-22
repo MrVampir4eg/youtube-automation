@@ -38,7 +38,7 @@ echo 2. Натисніть 'New +' → 'Web Service'
 echo 3. Connect ваш GitHub/GitLab репозиторій
 echo 4. Налаштування:
 echo    - Build Command: pip install -r requirements.txt
-echo    - Start Command: python dashboard/app.py
+echo    - Start Command: python -m dashboard.app
 echo    - Instance Type: Free
 echo 5. Додайте Environment Variables з вашого .env файлу
 echo.

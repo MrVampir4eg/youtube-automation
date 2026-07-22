@@ -24,8 +24,24 @@ class VideoProducer:
     """Головний оркестратор для створення та публікації відео"""
 
     def __init__(self):
-        self.content_gen = ContentGenerator()
-        self.voice_synth = VoiceSynthesizer()
+        # Якщо вказано Groq або USE_FREE_MODE, не вимагаємо
+        # OpenAI/ElevenLabs і використовуємо безкоштовні компоненти.
+        use_free_mode = (
+            os.getenv('USE_FREE_MODE', 'False').lower() == 'true'
+            or (bool(os.getenv('GROQ_API_KEY')) and not os.getenv('OPENAI_API_KEY'))
+        )
+
+        if use_free_mode:
+            from src.free_content_generator import FreeContentGenerator
+            from src.free_voice_synthesizer import FreeVoiceSynthesizer
+
+            self.content_gen = FreeContentGenerator()
+            self.voice_synth = FreeVoiceSynthesizer()
+            logger.info("✓ Free mode enabled: Groq/fallback + gTTS")
+        else:
+            self.content_gen = ContentGenerator()
+            self.voice_synth = VoiceSynthesizer()
+
         self.video_render = VideoRenderer()
         self.youtube = YouTubeUploader()
         self.db = Database()
@@ -68,7 +84,9 @@ class VideoProducer:
             script = self.content_gen.generate_script(niche_id=niche_id)
 
             logger.info(f"  Ніша: {script['niche_name']}")
-            logger.info(f"  Тип: {script['template']}")
+            logger.info(
+                f"  Тип: {script.get('template', script['metadata'].get('provider', 'default'))}"
+            )
             logger.info(f"  Тривалість: {script['estimated_duration']}s")
 
             # 2. СИНТЕЗ ОЗВУЧКИ

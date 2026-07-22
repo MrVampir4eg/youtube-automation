@@ -68,7 +68,7 @@ pip install -r requirements-free.txt
 copy .env.production .env
 
 # Запустіть!
-python dashboard/app.py
+python -m dashboard.app
 ```
 
 **Dashboard буде тут:** http://localhost:5000
