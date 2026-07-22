@@ -169,7 +169,10 @@ class AutomationScheduler:
             for video in videos:
                 if video.get('youtube_video_id'):
                     try:
-                        analytics = self.producer.youtube.get_video_analytics(
+                        uploader = self.producer.get_youtube_uploader(
+                            video.get('profile_id') or 'default'
+                        )
+                        analytics = uploader.get_video_analytics(
                             video['youtube_video_id']
                         )
 
@@ -252,15 +255,29 @@ class AutomationScheduler:
         except Exception as e:
             logger.error(f"Cleanup failed: {e}")
 
-    def trigger_manual_generation(self, count: int = 1, niche: Optional[str] = None):
+    def trigger_manual_generation(
+        self,
+        count: int = 1,
+        niche: Optional[str] = None,
+        content_mode: str = 'organic',
+        profile_id: str = 'default',
+        affiliate_offer_id: Optional[str] = None,
+        publish_scope: str = 'all_enabled',
+    ):
         """Ручний запуск генерації"""
         logger.info(f"Manual generation triggered: {count} videos")
 
         try:
-            if niche:
-                results = [self.producer.produce_video(niche_id=niche) for _ in range(count)]
-            else:
-                results = self.producer.produce_batch(count)
+            results = [
+                self.producer.produce_video(
+                    niche_id=niche,
+                    content_mode=content_mode,
+                    profile_id=profile_id,
+                    affiliate_offer_id=affiliate_offer_id,
+                    publish_scope=publish_scope,
+                )
+                for _ in range(count)
+            ]
 
             return results
 

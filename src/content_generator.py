@@ -52,7 +52,10 @@ class ContentGenerator:
         return self.niches[random.choice(active_niches)]
 
     def generate_script(self, niche_id: Optional[str] = None,
-                       template_type: Optional[str] = None) -> Dict:
+                       template_type: Optional[str] = None,
+                       content_mode: str = 'organic',
+                       affiliate_offer: Optional[Dict] = None,
+                       channel_name: str = '') -> Dict:
         """
         Генерація скрипту для відео
 
@@ -83,7 +86,11 @@ class ContentGenerator:
             template = random.choice(niche['content_templates'])
 
         # Побудова промпту
-        prompt = self._build_prompt(niche, template)
+        if content_mode == 'affiliate' and not affiliate_offer:
+            raise ValueError('Для партнерського режиму виберіть партнерську пропозицію')
+        prompt = self._build_prompt(
+            niche, template, content_mode, affiliate_offer, channel_name
+        )
 
         # Генерація через AI
         if self.provider == 'openai':
@@ -113,6 +120,8 @@ class ContentGenerator:
                 'generated_at': datetime.utcnow().isoformat(),
                 'provider': self.provider,
                 'model': self.model,
+                'content_mode': content_mode,
+                'affiliate_offer': affiliate_offer or None,
                 'tokens_used': script_data.get('tokens', 0),
                 'cost': script_data.get('cost', 0)
             }
@@ -121,14 +130,23 @@ class ContentGenerator:
         # Перевірка якості
         if not self._quality_check(result):
             logger.warning("Script failed quality check, regenerating...")
-            return self.generate_script(niche_id, template_type)
+            return self.generate_script(
+                niche_id, template_type, content_mode, affiliate_offer, channel_name
+            )
 
         logger.info(f"✓ Script generated: {estimated_duration}s, "
                    f"{result['metadata']['tokens_used']} tokens")
 
         return result
 
-    def _build_prompt(self, niche: Dict, template: Dict) -> str:
+    def _build_prompt(
+        self,
+        niche: Dict,
+        template: Dict,
+        content_mode: str = 'organic',
+        affiliate_offer: Optional[Dict] = None,
+        channel_name: str = '',
+    ) -> str:
         """Побудова промпту для AI"""
 
         min_dur = self.global_settings['min_duration_seconds']
@@ -138,7 +156,24 @@ class ContentGenerator:
         min_words = int(min_dur * wps)
         max_words = int(max_dur * wps)
 
+        if content_mode == 'affiliate' and affiliate_offer:
+            mode_rules = f"""
+ПАРТНЕРСЬКИЙ РЕЖИМ:
+- Канал: {channel_name or 'вибраний канал'}
+- Сервіс: {affiliate_offer.get('name', '')}
+- Перевірений опис: {affiliate_offer.get('description', '')}
+- Назви сервіс природно один раз і поясни, яку конкретну проблему він вирішує.
+- Не вигадуй функції, ціну, власний досвід, прибуток, гарантії чи рейтинги.
+- CTA: {affiliate_offer.get('cta') or 'Посилання — в описі'}
+"""
+        else:
+            mode_rules = """
+ОРГАНІЧНИЙ РЕЖИМ:
+- Не рекламуй бренди та не спрямовуй глядача за зовнішнім посиланням.
+"""
+
         prompt = f"""Створи захоплюючий скрипт для YouTube Shorts на тему з ніші "{niche['name']}".
+{mode_rules}
 
 ВИМОГИ:
 - Тривалість: {min_dur}-{max_dur} секунд ({min_words}-{max_words} слів)
@@ -401,6 +436,21 @@ CTA:
 
 #Shorts #{script['niche']} #{script['keywords'][0]} #{script['keywords'][1]}
 """
+        offer = script.get('metadata', {}).get('affiliate_offer') or {}
+        affiliate = None
+        if script.get('metadata', {}).get('content_mode') == 'affiliate' and offer:
+            disclosure = offer.get('disclosure') or (
+                'Партнерське посилання: я можу отримати комісію без доплати з вашого боку.'
+            )
+            description += (
+                f"\n🔗 {offer.get('name')}: {offer.get('url')}\n{disclosure}\n"
+            )
+            affiliate = {
+                'name': offer.get('name'),
+                'url': offer.get('url'),
+                'disclosure': disclosure,
+                'cta': offer.get('cta') or 'Посилання — в описі',
+            }
 
         # Генерація тегів
         tags = [
@@ -417,7 +467,8 @@ CTA:
             'title': title,
             'description': description,
             'tags': tags_str.split(', '),
-            'category_id': '22'  # People & Blogs
+            'category_id': '22',  # People & Blogs
+            'affiliate': affiliate,
         }
 
     def get_daily_stats(self) -> Dict:

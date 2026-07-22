@@ -98,7 +98,16 @@ class FreeContentGenerator:
             },
         }
 
-    def generate_script(self, niche_id: Optional[str] = None) -> Dict:
+    def generate_script(
+        self,
+        niche_id: Optional[str] = None,
+        content_mode: str = "organic",
+        affiliate_offer: Optional[Dict] = None,
+        channel_name: str = "",
+    ) -> Dict:
+        content_mode = content_mode if content_mode in {"organic", "affiliate"} else "organic"
+        if content_mode == "affiliate" and not affiliate_offer:
+            raise ValueError("Для партнерського режиму виберіть партнерську пропозицію")
         niche = self._select_niche(niche_id)
         market_signals = self.trend_scout.get_signals(niche)
         avoid_hooks = [item.get("hook", "") for item in self.history[-10:]]
@@ -112,11 +121,19 @@ class FreeContentGenerator:
         attempts = 1 if self.provider == "fallback" else self.max_attempts
         for attempt in range(attempts):
             if self.provider == "groq":
-                candidate = self._generate_groq(niche, market_signals, avoid_hooks)
+                candidate = self._generate_groq(
+                    niche, market_signals, avoid_hooks, content_mode,
+                    affiliate_offer, channel_name
+                )
             elif self.provider == "together":
-                candidate = self._generate_together(niche, market_signals, avoid_hooks)
+                candidate = self._generate_together(
+                    niche, market_signals, avoid_hooks, content_mode,
+                    affiliate_offer, channel_name
+                )
             else:
-                candidate = self._generate_fallback(niche)
+                candidate = self._generate_fallback(
+                    niche, content_mode, affiliate_offer
+                )
 
             candidate["quality_score"] = self._score_script(candidate)
             candidate["metadata"]["quality_score"] = candidate["quality_score"]
@@ -149,8 +166,14 @@ class FreeContentGenerator:
         niche: Dict,
         market_signals: List[str],
         avoid_hooks: List[str],
+        content_mode: str = "organic",
+        affiliate_offer: Optional[Dict] = None,
+        channel_name: str = "",
     ) -> Dict:
-        prompt = self._build_prompt(niche, market_signals, avoid_hooks)
+        prompt = self._build_prompt(
+            niche, market_signals, avoid_hooks, content_mode,
+            affiliate_offer, channel_name
+        )
         try:
             response = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
@@ -184,19 +207,27 @@ class FreeContentGenerator:
                 provider="groq",
                 model=self.groq_model,
                 market_signals=market_signals,
+                content_mode=content_mode,
+                affiliate_offer=affiliate_offer,
             )
         except Exception as exc:
             logger.error("Groq API error: %s", exc)
-            return self._generate_fallback(niche)
+            return self._generate_fallback(niche, content_mode, affiliate_offer)
 
     def _generate_together(
         self,
         niche: Dict,
         market_signals: List[str],
         avoid_hooks: List[str],
+        content_mode: str = "organic",
+        affiliate_offer: Optional[Dict] = None,
+        channel_name: str = "",
     ) -> Dict:
         model = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
-        prompt = self._build_prompt(niche, market_signals, avoid_hooks)
+        prompt = self._build_prompt(
+            niche, market_signals, avoid_hooks, content_mode,
+            affiliate_offer, channel_name
+        )
         try:
             response = requests.post(
                 "https://api.together.xyz/v1/chat/completions",
@@ -229,10 +260,12 @@ class FreeContentGenerator:
                 provider="together",
                 model=model,
                 market_signals=market_signals,
+                content_mode=content_mode,
+                affiliate_offer=affiliate_offer,
             )
         except Exception as exc:
             logger.error("Together AI error: %s", exc)
-            return self._generate_fallback(niche)
+            return self._generate_fallback(niche, content_mode, affiliate_offer)
 
     def _build_result(
         self,
@@ -241,6 +274,8 @@ class FreeContentGenerator:
         provider: str,
         model: str,
         market_signals: Optional[List[str]] = None,
+        content_mode: str = "organic",
+        affiliate_offer: Optional[Dict] = None,
     ) -> Dict:
         visuals = parsed["visual_queries"] or niche.get("video_themes", ["discovery"])
         return {
@@ -268,11 +303,51 @@ class FreeContentGenerator:
                 "model": model,
                 "market_signals": (market_signals or [])[:6],
                 "content_profile": self.content_profile,
+                "content_mode": content_mode,
+                "affiliate_offer": affiliate_offer or None,
                 "cost": 0.0,
             },
         }
 
-    def _generate_fallback(self, niche: Dict) -> Dict:
+    def _generate_fallback(
+        self,
+        niche: Dict,
+        content_mode: str = "organic",
+        affiliate_offer: Optional[Dict] = None,
+    ) -> Dict:
+        if content_mode == "affiliate" and affiliate_offer:
+            name = str(affiliate_offer.get("name") or "цей сервіс")
+            description = str(affiliate_offer.get("description") or "").rstrip(". ")
+            parsed = {
+                "topic": f"Як спростити задачу через {name}",
+                "hook": "Цю рутинну задачу можна скоротити.",
+                "body": (
+                    f"Замість повторювати все вручну, подивись на {name}. "
+                    f"За описом сервісу, він допомагає так: {description}. "
+                    "Спочатку перевір безкоштовний режим або демо й порівняй результат "
+                    "зі своїм звичним способом."
+                ),
+                "payoff": "Інструмент корисний лише тоді, коли реально економить твій час.",
+                "loop": "Саме тому рутинну задачу варто спочатку виміряти.",
+                "cta": affiliate_offer.get("cta") or "Посилання — в описі",
+                "angle": "чесна problem-first демонстрація без вигаданих обіцянок",
+                "hook_candidates": ["Цю рутинну задачу можна скоротити."],
+                "visual_queries": niche.get("video_themes", ["AI software dashboard"]),
+                "on_screen_text": ["РУТИНА", name.upper()[:24], "ПЕРЕВІР САМ"],
+                "sound_mood": "clean curious",
+            }
+            parsed["full_script"] = " ".join(
+                parsed[key] for key in ("hook", "body", "payoff", "loop")
+            )
+            return self._build_result(
+                niche,
+                parsed,
+                provider="fallback",
+                model="affiliate-template",
+                content_mode=content_mode,
+                affiliate_offer=affiliate_offer,
+            )
+
         templates = {
             "fun_facts": {
                 "topic": "Чому восьминіг воліє ходити",
@@ -347,6 +422,7 @@ class FreeContentGenerator:
             parsed,
             provider="fallback",
             model="original-template",
+            content_mode=content_mode,
         )
 
     def _build_prompt(
@@ -354,6 +430,9 @@ class FreeContentGenerator:
         niche: Dict,
         market_signals: List[str],
         avoid_hooks: List[str],
+        content_mode: str = "organic",
+        affiliate_offer: Optional[Dict] = None,
+        channel_name: str = "",
     ) -> str:
         templates = niche.get("content_templates", [])
         template = random.choice(templates) if templates else {}
@@ -373,6 +452,29 @@ class FreeContentGenerator:
             duration_rule = "18–35 секунд, 50–82 слова озвучки"
             pacing_rule = "Не розтягуй думку: один ролик — одна завершена ідея."
 
+        if content_mode == "affiliate" and affiliate_offer:
+            offer_rules = f"""
+
+ПАРТНЕРСЬКИЙ РЕЖИМ:
+- Канал: {channel_name or 'вибраний партнерський канал'}
+- Сервіс: {affiliate_offer.get('name', '')}
+- Перевірений власником опис: {affiliate_offer.get('description', '')}
+- Дозволені ключові слова: {', '.join(affiliate_offer.get('keywords', [])) or 'немає'}
+- CTA: {affiliate_offer.get('cta') or 'Посилання — в описі'}
+- Спочатку покажи реальну проблему й корисний спосіб перевірити сервіс.
+- Назви сервіс природно один раз у BODY; ролик не повинен звучати як агресивна реклама.
+- Не вигадуй ціну, функції, особистий досвід, заробіток, гарантії, рейтинги або відгуки.
+- Не кажи «я користувався/заробив/перевірив», якщо цього немає в описі власника.
+- Озвучений CTA може лише чесно сказати, що посилання є в описі.
+"""
+        else:
+            offer_rules = """
+
+ОРГАНІЧНИЙ РЕЖИМ:
+- Не рекламуй, не називай бренди й не проси переходити за посиланням.
+- Мета — утримання, коментар або підписка без продажу.
+"""
+
         return f"""Створи ОДИН оригінальний український сценарій для вертикального відео.
 
 КАНАЛ:
@@ -382,13 +484,15 @@ class FreeContentGenerator:
 - Дуга: {structure}
 - Безпечні ринкові сигнали: {market_text}
 - Не повторюй попередні хуки: {avoid_text}
+{offer_rules}
 
 РИНКОВА ФОРМУЛА:
 1. Перша секунда зупиняє свайп: 4–7 простих слів, конкретний конфлікт або дивина.
 2. До третьої секунди відкрий інформаційну петлю — глядач має захотіти відповідь.
 3. Кожні 1–2 речення додавай нову деталь, контраст або зміну очікування.
 4. Дай чесну розв'язку/панчлайн до фіналу. Остання фраза природно повертає до HOOK.
-5. CTA не озвучується: це лише короткий текст на екрані.
+5. В органічному режимі CTA не озвучується. У партнерському дозволена лише
+   коротка чесна фраза про посилання в описі.
 
 ЖОРСТКІ ВИМОГИ:
 - {duration_rule}
@@ -630,6 +734,22 @@ SOUND_MOOD:
             f"{script.get('cta', '')}\n\n"
             f"#Shorts #{script['niche']} #українською"
         )
+        offer = script.get("metadata", {}).get("affiliate_offer") or {}
+        affiliate = None
+        if script.get("metadata", {}).get("content_mode") == "affiliate" and offer:
+            disclosure = offer.get("disclosure") or (
+                "Партнерське посилання: я можу отримати комісію без доплати з вашого боку."
+            )
+            description = (
+                f"{description}\n\n🔗 {offer.get('name')}: {offer.get('url')}"
+                f"\n{disclosure}"
+            )
+            affiliate = {
+                "name": offer.get("name"),
+                "url": offer.get("url"),
+                "disclosure": disclosure,
+                "cta": offer.get("cta") or "Посилання — в описі",
+            }
         tags = [
             script["niche"],
             script["niche_name"],
@@ -642,6 +762,7 @@ SOUND_MOOD:
             "description": description,
             "tags": tags[:10],
             "category_id": "22",
+            "affiliate": affiliate,
         }
 
     def get_daily_stats(self) -> Dict:

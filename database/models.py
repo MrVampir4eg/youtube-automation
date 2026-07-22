@@ -4,9 +4,11 @@ SQLite база даних для зберігання відео та стат�
 """
 
 import sqlite3
+import os
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 
@@ -16,8 +18,20 @@ logger = logging.getLogger(__name__)
 class Database:
     """SQLite база даних"""
 
-    def __init__(self, db_path: str = 'youtube_automation.db'):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str] = None):
+        # DATABASE_PATH can point at a Render persistent disk, for example
+        # /var/data/youtube_automation.db. DATABASE_URL is kept for backward
+        # compatibility with the old SQLite-only configuration.
+        configured = db_path or os.getenv('DATABASE_PATH', '').strip()
+        if not configured:
+            database_url = os.getenv('DATABASE_URL', '').strip()
+            configured = (
+                database_url.removeprefix('sqlite:///')
+                if database_url.startswith('sqlite:///')
+                else 'youtube_automation.db'
+            )
+        self.db_path = Path(configured)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = None
         self._init_db()
 
@@ -80,10 +94,42 @@ class Database:
                 occurred_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS channel_profiles (
+                profile_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                youtube_refresh_token TEXT,
+                youtube_channel_id TEXT,
+                youtube_channel_title TEXT,
+                youtube_channel_handle TEXT,
+                default_content_mode TEXT DEFAULT 'organic',
+                default_offer_id TEXT,
+                default_niche TEXT,
+                privacy_status TEXT DEFAULT 'public',
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS affiliate_offers (
+                offer_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                description TEXT NOT NULL,
+                keywords TEXT,
+                cta TEXT,
+                disclosure TEXT,
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (profile_id) REFERENCES channel_profiles(profile_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_videos_niche ON videos(niche);
             CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at);
             CREATE INDEX IF NOT EXISTS idx_analytics_video ON analytics(video_id);
             CREATE INDEX IF NOT EXISTS idx_analytics_checked ON analytics(checked_at);
+            CREATE INDEX IF NOT EXISTS idx_offers_profile ON affiliate_offers(profile_id);
         """)
 
         # Безпечна міграція старої Render SQLite без видалення даних.
@@ -93,6 +139,24 @@ class Database:
         }
         if 'platform_results' not in columns:
             self.conn.execute("ALTER TABLE videos ADD COLUMN platform_results TEXT")
+        for column, definition in {
+            'content_mode': "TEXT DEFAULT 'organic'",
+            'profile_id': "TEXT DEFAULT 'default'",
+            'affiliate_offer_id': 'TEXT',
+        }.items():
+            if column not in columns:
+                self.conn.execute(f"ALTER TABLE videos ADD COLUMN {column} {definition}")
+
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO channel_profiles (
+                profile_id, name, default_content_mode, privacy_status,
+                enabled, created_at, updated_at
+            ) VALUES ('default', 'Основний канал', 'organic', 'public', 1, ?, ?)
+            """,
+            (now, now),
+        )
 
         self.conn.commit()
         logger.info(f"✓ Database initialized: {self.db_path}")
@@ -105,8 +169,9 @@ class Database:
             INSERT INTO videos (
                 video_id, niche, title, description, script,
                 video_path, audio_path, duration, filesize,
-                youtube_video_id, youtube_url, platform_results, ai_cost, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                youtube_video_id, youtube_url, platform_results, ai_cost, created_at,
+                content_mode, profile_id, affiliate_offer_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             video_data['video_id'],
             video_data['niche'],
@@ -121,7 +186,10 @@ class Database:
             video_data.get('youtube_url'),
             json.dumps(video_data.get('platform_results', {}), ensure_ascii=False),
             video_data.get('ai_cost', 0),
-            video_data['created_at']
+            video_data['created_at'],
+            video_data.get('content_mode', 'organic'),
+            video_data.get('profile_id', 'default'),
+            video_data.get('affiliate_offer_id')
         ))
 
         self.conn.commit()
@@ -286,6 +354,171 @@ class Database:
         """Закрити з'єднання"""
         if self.conn:
             self.conn.close()
+
+    # ------------------------------------------------------------------
+    # Channel profiles and affiliate offers
+    # ------------------------------------------------------------------
+
+    def list_channel_profiles(self, include_secrets: bool = False) -> List[Dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM channel_profiles WHERE enabled = 1 ORDER BY created_at ASC"
+        ).fetchall()
+        profiles = []
+        for row in rows:
+            profile = dict(row)
+            profile['connected'] = bool(profile.get('youtube_refresh_token')) or (
+                profile['profile_id'] == 'default'
+                and bool(os.getenv('YOUTUBE_REFRESH_TOKEN'))
+            )
+            profile['enabled'] = bool(profile.get('enabled'))
+            if not include_secrets:
+                profile.pop('youtube_refresh_token', None)
+            profiles.append(profile)
+        return profiles
+
+    def get_channel_profile(
+        self, profile_id: str, include_secrets: bool = False
+    ) -> Optional[Dict]:
+        row = self.conn.execute(
+            "SELECT * FROM channel_profiles WHERE profile_id = ? AND enabled = 1",
+            (profile_id,),
+        ).fetchone()
+        if not row:
+            return None
+        profile = dict(row)
+        if (
+            profile_id == 'default'
+            and not profile.get('youtube_refresh_token')
+            and os.getenv('YOUTUBE_REFRESH_TOKEN')
+        ):
+            profile['youtube_refresh_token'] = os.getenv('YOUTUBE_REFRESH_TOKEN')
+        profile['connected'] = bool(profile.get('youtube_refresh_token'))
+        profile['enabled'] = bool(profile.get('enabled'))
+        if not include_secrets:
+            profile.pop('youtube_refresh_token', None)
+        return profile
+
+    def create_channel_profile(self, name: str) -> Dict:
+        profile_id = uuid.uuid4().hex[:12]
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            INSERT INTO channel_profiles (
+                profile_id, name, default_content_mode, privacy_status,
+                enabled, created_at, updated_at
+            ) VALUES (?, ?, 'organic', 'public', 1, ?, ?)
+            """,
+            (profile_id, name.strip(), now, now),
+        )
+        self.conn.commit()
+        return self.get_channel_profile(profile_id) or {}
+
+    def save_channel_credentials(
+        self,
+        profile_id: str,
+        refresh_token: str,
+        channel_info: Optional[Dict] = None,
+    ) -> None:
+        info = channel_info or {}
+        cursor = self.conn.execute(
+            """
+            UPDATE channel_profiles
+            SET youtube_refresh_token = ?, youtube_channel_id = ?,
+                youtube_channel_title = ?, youtube_channel_handle = ?,
+                updated_at = ?
+            WHERE profile_id = ? AND enabled = 1
+            """,
+            (
+                refresh_token,
+                info.get('channel_id'),
+                info.get('title'),
+                info.get('handle'),
+                datetime.now(timezone.utc).isoformat(),
+                profile_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError('Профіль каналу не знайдено')
+        self.conn.commit()
+
+    def update_channel_profile(self, profile_id: str, values: Dict) -> Dict:
+        allowed = {
+            'name', 'default_content_mode', 'default_offer_id', 'default_niche',
+            'privacy_status'
+        }
+        updates = {key: value for key, value in values.items() if key in allowed}
+        if not updates:
+            return self.get_channel_profile(profile_id) or {}
+        assignments = ', '.join(f'{key} = ?' for key in updates)
+        params = [*updates.values(), datetime.now(timezone.utc).isoformat(), profile_id]
+        cursor = self.conn.execute(
+            f"UPDATE channel_profiles SET {assignments}, updated_at = ? "
+            "WHERE profile_id = ? AND enabled = 1",
+            params,
+        )
+        if cursor.rowcount != 1:
+            raise ValueError('Профіль каналу не знайдено')
+        self.conn.commit()
+        return self.get_channel_profile(profile_id) or {}
+
+    def create_affiliate_offer(self, profile_id: str, data: Dict) -> Dict:
+        if not self.get_channel_profile(profile_id):
+            raise ValueError('Профіль каналу не знайдено')
+        offer_id = uuid.uuid4().hex[:12]
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            INSERT INTO affiliate_offers (
+                offer_id, profile_id, name, url, description, keywords,
+                cta, disclosure, enabled, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            """,
+            (
+                offer_id,
+                profile_id,
+                data['name'].strip(),
+                data['url'].strip(),
+                data['description'].strip(),
+                json.dumps(data.get('keywords', []), ensure_ascii=False),
+                data.get('cta', '').strip() or 'Посилання — в описі',
+                data.get('disclosure', '').strip()
+                or 'Партнерське посилання: я можу отримати комісію без доплати з вашого боку.',
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        return self.get_affiliate_offer(offer_id) or {}
+
+    def list_affiliate_offers(self, profile_id: Optional[str] = None) -> List[Dict]:
+        if profile_id:
+            rows = self.conn.execute(
+                """SELECT * FROM affiliate_offers
+                   WHERE enabled = 1 AND profile_id = ? ORDER BY created_at DESC""",
+                (profile_id,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM affiliate_offers WHERE enabled = 1 ORDER BY created_at DESC"
+            ).fetchall()
+        return [self._offer_row(row) for row in rows]
+
+    def get_affiliate_offer(self, offer_id: str) -> Optional[Dict]:
+        row = self.conn.execute(
+            "SELECT * FROM affiliate_offers WHERE offer_id = ? AND enabled = 1",
+            (offer_id,),
+        ).fetchone()
+        return self._offer_row(row) if row else None
+
+    @staticmethod
+    def _offer_row(row: sqlite3.Row) -> Dict:
+        offer = dict(row)
+        try:
+            offer['keywords'] = json.loads(offer.get('keywords') or '[]')
+        except json.JSONDecodeError:
+            offer['keywords'] = []
+        offer['enabled'] = bool(offer.get('enabled'))
+        return offer
 
     def __del__(self):
         self.close()

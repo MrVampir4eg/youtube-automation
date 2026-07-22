@@ -13,7 +13,9 @@ import uuid
 
 from src.video_renderer import VideoRenderer
 from src.youtube_uploader import YouTubeUploader
-from src.platform_publishers import UniversalPublisher, build_platform_metadata
+from src.platform_publishers import (
+    UniversalPublisher, build_platform_metadata, enabled_platforms
+)
 from database.models import Database, Video
 
 logger = logging.getLogger(__name__)
@@ -62,7 +64,11 @@ class VideoProducer:
 
     def produce_video(self,
                      niche_id: Optional[str] = None,
-                     auto_upload: bool = None) -> Dict:
+                     auto_upload: bool = None,
+                     content_mode: str = 'organic',
+                     profile_id: str = 'default',
+                     affiliate_offer_id: Optional[str] = None,
+                     publish_scope: str = 'all_enabled') -> Dict:
         """
         Повний цикл створення відео: генерація → озвучка → рендеринг → публікація
 
@@ -79,6 +85,22 @@ class VideoProducer:
             }
         """
 
+        content_mode = (
+            content_mode if content_mode in {'organic', 'affiliate'} else 'organic'
+        )
+        if publish_scope not in {'create_only', 'youtube_only', 'all_enabled'}:
+            raise ValueError('Невідомий режим публікації')
+        profile = self.db.get_channel_profile(profile_id, include_secrets=True)
+        if not profile:
+            raise ValueError('Вибраний профіль каналу не знайдено')
+        offer = None
+        if content_mode == 'affiliate':
+            if not affiliate_offer_id:
+                raise ValueError('Для партнерського режиму виберіть пропозицію')
+            offer = self.db.get_affiliate_offer(affiliate_offer_id)
+            if not offer or offer.get('profile_id') != profile_id:
+                raise ValueError('Партнерська пропозиція не належить цьому каналу')
+
         video_id = str(uuid.uuid4())[:8]
         logger.info(f"{'='*60}")
         logger.info(f"Starting video production: {video_id}")
@@ -87,7 +109,12 @@ class VideoProducer:
         try:
             # 1. ГЕНЕРАЦІЯ СКРИПТУ
             logger.info("Step 1/5: Generating script...")
-            script = self.content_gen.generate_script(niche_id=niche_id)
+            script = self.content_gen.generate_script(
+                niche_id=niche_id,
+                content_mode=content_mode,
+                affiliate_offer=offer,
+                channel_name=profile.get('youtube_channel_title') or profile['name'],
+            )
 
             logger.info(f"  Ніша: {script['niche_name']}")
             logger.info(
@@ -141,15 +168,35 @@ class VideoProducer:
             platform_results = {}
             if auto_upload is None:
                 auto_upload = os.getenv('AUTO_UPLOAD', 'False').lower() == 'true'
+            if publish_scope == 'create_only':
+                auto_upload = False
 
             if auto_upload:
-                logger.info("Step 5/5: Publishing to enabled platforms...")
+                target_platforms = (
+                    ['youtube'] if publish_scope == 'youtube_only'
+                    else enabled_platforms()
+                )
+                youtube_uploader = (
+                    self.get_youtube_uploader(profile_id)
+                    if 'youtube' in target_platforms else None
+                )
+                logger.info(
+                    "Step 5/5: Publishing %s content via profile %s to %s...",
+                    content_mode,
+                    profile_id,
+                    ','.join(target_platforms),
+                )
                 platform_metadata = build_platform_metadata(script, seo)
                 platform_results = self.publisher.publish_all(
                     video_path=video_result['video_path'],
                     video_id=video_id,
                     metadata=platform_metadata,
+                    youtube_uploader=youtube_uploader,
+                    platforms=target_platforms,
                 )
+                if 'youtube' in platform_results:
+                    platform_results['youtube']['profile_id'] = profile_id
+                    platform_results['youtube']['profile_name'] = profile['name']
                 youtube_status = platform_results.get('youtube') or {}
                 if youtube_status.get('status') == 'published':
                     youtube_result = {
@@ -184,7 +231,10 @@ class VideoProducer:
                 'youtube_url': youtube_result['url'] if youtube_result else None,
                 'platform_results': platform_results,
                 'created_at': datetime.utcnow().isoformat(),
-                'ai_cost': script['metadata']['cost'] + (audio_result.get('cost', 0) or 0)
+                'ai_cost': script['metadata']['cost'] + (audio_result.get('cost', 0) or 0),
+                'content_mode': content_mode,
+                'profile_id': profile_id,
+                'affiliate_offer_id': affiliate_offer_id,
             }
 
             self.db.add_video(video_data)
@@ -210,6 +260,10 @@ class VideoProducer:
                 'youtube_video_id': youtube_result['video_id'] if youtube_result else None,
                 'youtube_error': youtube_error,
                 'platform_results': platform_results,
+                'content_mode': content_mode,
+                'profile_id': profile_id,
+                'profile_name': profile['name'],
+                'affiliate_offer_id': affiliate_offer_id,
                 'niche': script['niche'],
                 'title': seo['title'],
                 'duration': video_result['duration'],
@@ -228,6 +282,18 @@ class VideoProducer:
                 'timestamp': datetime.utcnow().isoformat()
             })
             raise
+
+    def get_youtube_uploader(self, profile_id: str = 'default') -> YouTubeUploader:
+        """Create an isolated uploader so one profile can never use another token."""
+        profile = self.db.get_channel_profile(profile_id, include_secrets=True)
+        if not profile:
+            raise ValueError('Профіль каналу не знайдено')
+        return YouTubeUploader(
+            refresh_token=profile.get('youtube_refresh_token'),
+            use_token_file=False,
+            privacy_status=profile.get('privacy_status') or 'public',
+            allow_environment_token=False,
+        )
 
     def produce_batch(self, count: int, niches: Optional[list] = None) -> list:
         """
@@ -289,7 +355,9 @@ class VideoProducer:
             return {'error': 'Video not found or not uploaded'}
 
         # Отримуємо stats з YouTube
-        analytics = self.youtube.get_video_analytics(video['youtube_video_id'])
+        analytics = self.get_youtube_uploader(
+            video.get('profile_id') or 'default'
+        ).get_video_analytics(video['youtube_video_id'])
 
         # Розраховуємо ROI
         ai_cost = video.get('ai_cost', 0)
@@ -321,9 +389,17 @@ class VideoProducer:
         with_analytics = []
         for video in videos:
             if video.get('youtube_video_id'):
-                analytics = self.youtube.get_video_analytics(video['youtube_video_id'])
-                video['analytics'] = analytics
-                with_analytics.append(video)
+                try:
+                    analytics = self.get_youtube_uploader(
+                        video.get('profile_id') or 'default'
+                    ).get_video_analytics(video['youtube_video_id'])
+                    video['analytics'] = analytics
+                    with_analytics.append(video)
+                except Exception as exc:
+                    logger.warning(
+                        "Could not read analytics for %s: %s",
+                        video['video_id'], exc
+                    )
 
         # Сортуємо по переглядам
         sorted_videos = sorted(

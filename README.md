@@ -1,5 +1,9 @@
 # 🚀 Universal Shorts & Reels Automation System
 
+> **v13:** окремі профілі YouTube-каналів і два режими генерації — звичайний
+> та партнерський. Вибір каналу, AI-пропозиції та цілі публікації виконується
+> прямо на Dashboard. Див. [CHANNEL_PROFILES_AFFILIATE.md](CHANNEL_PROFILES_AFFILIATE.md).
+
 > **v12:** один вертикальний ролик може автоматично розходитися в YouTube
 > Shorts, Instagram Reels, Facebook Reels і TikTok. Окремі підписи, ізоляція
 > помилок платформ і два профілі тривалості описані в

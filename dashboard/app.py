@@ -15,12 +15,13 @@ from flask import (
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import json
+from urllib.parse import urlparse
 from google_auth_oauthlib.flow import Flow
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from src.orchestrator import VideoProducer
 from src.scheduler import AutomationScheduler
-from src.youtube_uploader import SCOPES
+from src.youtube_uploader import SCOPES, YouTubeUploader
 from src.platform_publishers import is_valid_media_signature
 from database.models import Database
 
@@ -39,9 +40,10 @@ app.config.update(
 project_root = Path(__file__).resolve().parents[1]
 video_output_dir = (project_root / 'output' / 'videos').resolve()
 
-# Ініціалізація компонентів
-producer = VideoProducer()
+# Ініціалізація компонентів. Dashboard і scheduler використовують один
+# producer, тому OAuth/профілі не розходяться між двома копіями стану.
 scheduler = AutomationScheduler()
+producer = scheduler.producer
 db = Database()
 
 # Запуск scheduler
@@ -59,7 +61,15 @@ def _update_generation_job(job_id, **updates):
         generation_jobs[job_id].update(updates)
 
 
-def _run_generation_job(job_id, count, niche):
+def _run_generation_job(
+    job_id,
+    count,
+    niche,
+    content_mode,
+    profile_id,
+    affiliate_offer_id,
+    publish_scope,
+):
     """Фонова генерація одного завдання за раз."""
     with generation_worker_lock:
         _update_generation_job(
@@ -69,13 +79,24 @@ def _run_generation_job(job_id, count, niche):
         )
 
         try:
-            results = scheduler.trigger_manual_generation(count=count, niche=niche)
+            results = scheduler.trigger_manual_generation(
+                count=count,
+                niche=niche,
+                content_mode=content_mode,
+                profile_id=profile_id,
+                affiliate_offer_id=affiliate_offer_id,
+                publish_scope=publish_scope,
+            )
             videos = [{
                 'video_id': result['video_id'],
                 'title': result['title'],
                 'url': result.get('youtube_url'),
                 'upload_error': result.get('youtube_error'),
                 'platform_results': result.get('platform_results', {}),
+                'content_mode': result.get('content_mode', 'organic'),
+                'profile_id': result.get('profile_id', 'default'),
+                'profile_name': result.get('profile_name'),
+                'affiliate_offer_id': result.get('affiliate_offer_id'),
                 'download_url': f"/api/videos/{result['video_id']}/download"
             } for result in results if 'error' not in result]
 
@@ -107,7 +128,11 @@ def index():
 @app.route('/youtube/connect')
 def youtube_connect():
     """Почати Google OAuth для YouTube-каналу."""
-    uploader = scheduler.producer.youtube
+    profile_id = request.args.get('profile_id', 'default').strip()
+    profile = db.get_channel_profile(profile_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Профіль каналу не знайдено'}), 404
+    uploader = YouTubeUploader(use_token_file=False)
     try:
         # Prefer the exact callback configured in Render. Building it from the
         # incoming proxy request can produce a host that Google has not whitelisted.
@@ -123,10 +148,13 @@ def youtube_connect():
         authorization_url, state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
-            prompt='consent'
+            # select_account is essential when several YouTube channels use the
+            # same dashboard; consent requests a durable refresh token.
+            prompt='consent select_account'
         )
         session['youtube_oauth_state'] = state
         session['youtube_redirect_uri'] = redirect_uri
+        session['youtube_profile_id'] = profile_id
         return redirect(authorization_url)
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
@@ -153,7 +181,11 @@ def oauth2callback():
             'error': 'OAuth session expired. Open /youtube/connect again.'
         }), 400
 
-    uploader = scheduler.producer.youtube
+    profile_id = session.pop('youtube_profile_id', 'default')
+    profile = db.get_channel_profile(profile_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Профіль каналу не знайдено'}), 404
+    uploader = YouTubeUploader(use_token_file=False)
     try:
         flow = Flow.from_client_config(
             uploader.get_oauth_client_config(),
@@ -168,15 +200,22 @@ def oauth2callback():
                 'Google did not return a refresh token. Revoke app access and connect again.'
             )
 
-        # Поточний instance одразу готовий до upload. Для redeploy
-        # користувач зберігає refresh token у Render Environment.
-        scheduler.producer.youtube.set_credentials(credentials)
-        producer.youtube.set_credentials(credentials)
+        # Кожен профіль зберігає власний refresh token. Він ніколи не
+        # повертається через JSON API або на Dashboard.
+        uploader.set_credentials(credentials)
+        channel_info = uploader.get_channel_info()
+        db.save_channel_credentials(
+            profile_id,
+            credentials.refresh_token,
+            channel_info,
+        )
         os.environ['AUTO_UPLOAD'] = 'True'
 
         response = make_response(render_template(
             'youtube_connected.html',
-            refresh_token=credentials.refresh_token
+            profile_name=profile['name'],
+            channel_title=channel_info.get('title'),
+            channel_id=channel_info.get('channel_id'),
         ))
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
         response.headers['Pragma'] = 'no-cache'
@@ -188,10 +227,12 @@ def oauth2callback():
 @app.route('/api/youtube/status')
 def youtube_status():
     """Стан YouTube OAuth і автозавантаження."""
-    uploader = scheduler.producer.youtube
+    profile_id = request.args.get('profile_id', 'default').strip()
+    profile = db.get_channel_profile(profile_id)
     return jsonify({
         'success': True,
-        'connected': uploader.is_configured(),
+        'profile_id': profile_id,
+        'connected': bool(profile and profile.get('connected')),
         'auto_upload': os.getenv('AUTO_UPLOAD', 'False').lower() == 'true'
     })
 
@@ -250,6 +291,9 @@ def list_videos():
             'duration': v['duration'],
             'youtube_url': v.get('youtube_url'),
             'platform_results': v.get('platform_results', {}),
+            'content_mode': v.get('content_mode', 'organic'),
+            'profile_id': v.get('profile_id', 'default'),
+            'affiliate_offer_id': v.get('affiliate_offer_id'),
             'created_at': v['created_at'],
             'ai_cost': v.get('ai_cost', 0),
             'download_url': f"/api/videos/{v['video_id']}/download"
@@ -323,6 +367,27 @@ def generate_video():
     data = request.get_json(silent=True) or {}
     niche = data.get('niche')
     count = max(1, min(int(data.get('count', 1)), 1))
+    content_mode = str(data.get('content_mode', 'organic')).strip().lower()
+    profile_id = str(data.get('profile_id', 'default')).strip()
+    affiliate_offer_id = data.get('affiliate_offer_id') or None
+    # Existing scheduled calls do not send this field and keep the old
+    # universal behavior. Dashboard sends an explicit safer manual choice.
+    publish_scope = str(data.get('publish_scope', 'all_enabled')).strip().lower()
+
+    if content_mode not in {'organic', 'affiliate'}:
+        return jsonify({'success': False, 'error': 'Невідомий режим контенту'}), 400
+    if publish_scope not in {'create_only', 'youtube_only', 'all_enabled'}:
+        return jsonify({'success': False, 'error': 'Невідома ціль публікації'}), 400
+    profile = db.get_channel_profile(profile_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Профіль каналу не знайдено'}), 404
+    if content_mode == 'affiliate':
+        offer = db.get_affiliate_offer(affiliate_offer_id or '')
+        if not offer or offer.get('profile_id') != profile_id:
+            return jsonify({
+                'success': False,
+                'error': 'Виберіть партнерську пропозицію для цього каналу'
+            }), 400
 
     with generation_jobs_lock:
         active_job = next((
@@ -342,12 +407,19 @@ def generate_video():
             'job_id': job_id,
             'status': 'queued',
             'created_at': datetime.utcnow().isoformat(),
+            'content_mode': content_mode,
+            'profile_id': profile_id,
+            'affiliate_offer_id': affiliate_offer_id,
+            'publish_scope': publish_scope,
             'videos': []
         }
 
     Thread(
         target=_run_generation_job,
-        args=(job_id, count, niche),
+        args=(
+            job_id, count, niche, content_mode, profile_id,
+            affiliate_offer_id, publish_scope
+        ),
         daemon=True
     ).start()
 
@@ -356,6 +428,81 @@ def generate_video():
         'job_id': job_id,
         'status': 'queued'
     }), 202
+
+
+@app.route('/api/channel-profiles', methods=['GET', 'POST'])
+def channel_profiles():
+    """List profiles or create a clean destination for another YouTube account."""
+    if request.method == 'GET':
+        profiles = db.list_channel_profiles()
+        return jsonify({'success': True, 'profiles': profiles})
+
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name', '')).strip()
+    if not 2 <= len(name) <= 80:
+        return jsonify({
+            'success': False,
+            'error': 'Назва профілю повинна містити від 2 до 80 символів'
+        }), 400
+    profile = db.create_channel_profile(name)
+    return jsonify({'success': True, 'profile': profile}), 201
+
+
+@app.route('/api/channel-profiles/<profile_id>', methods=['PATCH'])
+def update_channel_profile(profile_id):
+    data = request.get_json(silent=True) or {}
+    mode = data.get('default_content_mode')
+    if mode is not None and mode not in {'organic', 'affiliate'}:
+        return jsonify({'success': False, 'error': 'Невідомий режим контенту'}), 400
+    privacy = data.get('privacy_status')
+    if privacy is not None and privacy not in {'public', 'unlisted', 'private'}:
+        return jsonify({'success': False, 'error': 'Невідомий YouTube privacy status'}), 400
+    try:
+        profile = db.update_channel_profile(profile_id, data)
+        return jsonify({'success': True, 'profile': profile})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+
+
+@app.route('/api/affiliate-offers', methods=['GET', 'POST'])
+def affiliate_offers():
+    """Manage approved public affiliate links without exposing any API secrets."""
+    if request.method == 'GET':
+        profile_id = request.args.get('profile_id')
+        return jsonify({
+            'success': True,
+            'offers': db.list_affiliate_offers(profile_id=profile_id)
+        })
+
+    data = request.get_json(silent=True) or {}
+    profile_id = str(data.get('profile_id', '')).strip()
+    name = str(data.get('name', '')).strip()
+    url = str(data.get('url', '')).strip()
+    description = str(data.get('description', '')).strip()
+    parsed_url = urlparse(url)
+    if not db.get_channel_profile(profile_id):
+        return jsonify({'success': False, 'error': 'Профіль каналу не знайдено'}), 404
+    if not 2 <= len(name) <= 100:
+        return jsonify({'success': False, 'error': 'Вкажіть назву сервісу'}), 400
+    if parsed_url.scheme not in {'http', 'https'} or not parsed_url.netloc:
+        return jsonify({'success': False, 'error': 'Вкажіть повне https-посилання'}), 400
+    if not 10 <= len(description) <= 800:
+        return jsonify({
+            'success': False,
+            'error': 'Опишіть перевірені функції сервісу (10–800 символів)'
+        }), 400
+    keywords = data.get('keywords', [])
+    if isinstance(keywords, str):
+        keywords = [item.strip() for item in keywords.split(',') if item.strip()]
+    offer = db.create_affiliate_offer(profile_id, {
+        'name': name,
+        'url': url,
+        'description': description,
+        'keywords': list(keywords)[:12],
+        'cta': str(data.get('cta', '')).strip(),
+        'disclosure': str(data.get('disclosure', '')).strip(),
+    })
+    return jsonify({'success': True, 'offer': offer}), 201
 
 
 @app.route('/api/generate/<job_id>')

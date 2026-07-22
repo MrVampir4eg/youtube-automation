@@ -29,13 +29,25 @@ TOKEN_URI = 'https://oauth2.googleapis.com/token'
 class YouTubeUploader:
     """Публікація відео на YouTube"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        refresh_token: Optional[str] = None,
+        use_token_file: bool = True,
+        privacy_status: Optional[str] = None,
+        allow_environment_token: bool = True,
+    ):
         self.client_id = os.getenv('YOUTUBE_CLIENT_ID')
         self.client_secret = os.getenv('YOUTUBE_CLIENT_SECRET')
         self.redirect_uri = os.getenv('YOUTUBE_REDIRECT_URI', 'http://localhost:5000/oauth2callback')
+        self.refresh_token = refresh_token
+        self.privacy_status = privacy_status
+        self.allow_environment_token = allow_environment_token
 
         project_root = Path(__file__).resolve().parents[1]
-        self.token_file = project_root / 'config' / 'youtube_token.pickle'
+        self.token_file = (
+            project_root / 'config' / 'youtube_token.pickle'
+            if use_token_file else None
+        )
 
         self.youtube = None
 
@@ -70,14 +82,22 @@ class YouTubeUploader:
         return bool(
             self.client_id
             and self.client_secret
-            and (os.getenv('YOUTUBE_REFRESH_TOKEN') or self.token_file.exists())
+            and (
+                self.refresh_token
+                or (
+                    self.allow_environment_token
+                    and os.getenv('YOUTUBE_REFRESH_TOKEN')
+                )
+                or (self.token_file is not None and self.token_file.exists())
+            )
         )
 
     def set_credentials(self, creds: Credentials):
         """Зберегти OAuth credentials для поточного instance."""
-        self.token_file.parent.mkdir(parents=True, exist_ok=True)
-        with self.token_file.open('wb') as token:
-            pickle.dump(creds, token)
+        if self.token_file is not None:
+            self.token_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.token_file.open('wb') as token:
+                pickle.dump(creds, token)
         self.youtube = build(
             'youtube',
             'v3',
@@ -90,7 +110,10 @@ class YouTubeUploader:
         self.get_oauth_client_config()
         creds = None
 
-        refresh_token = os.getenv('YOUTUBE_REFRESH_TOKEN')
+        refresh_token = self.refresh_token or (
+            os.getenv('YOUTUBE_REFRESH_TOKEN')
+            if self.allow_environment_token else None
+        )
         if refresh_token:
             creds = Credentials(
                 token=None,
@@ -103,7 +126,7 @@ class YouTubeUploader:
 
         # Token-файл дає змогу завантажувати одразу після callback,
         # але для переживання redeploy token треба зберегти в Render.
-        if creds is None and self.token_file.exists():
+        if creds is None and self.token_file is not None and self.token_file.exists():
             try:
                 with self.token_file.open('rb') as token:
                     creds = pickle.load(token)
@@ -168,7 +191,10 @@ class YouTubeUploader:
             }
 
         self._ensure_authenticated()
-        privacy_status = os.getenv('YOUTUBE_PRIVACY_STATUS', privacy_status)
+        privacy_status = (
+            self.privacy_status
+            or os.getenv('YOUTUBE_PRIVACY_STATUS', privacy_status)
+        )
 
         logger.info(f"Uploading video: {video_path.name}")
         logger.info(f"Title: {title[:50]}...")
@@ -350,6 +376,7 @@ class YouTubeUploader:
             return {
                 'channel_id': channel['id'],
                 'title': channel['snippet']['title'],
+                'handle': channel['snippet'].get('customUrl'),
                 'description': channel['snippet']['description'],
                 'subscribers': int(stats.get('subscriberCount', 0)),
                 'total_views': int(stats.get('viewCount', 0)),

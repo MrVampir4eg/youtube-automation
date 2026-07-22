@@ -106,6 +106,7 @@
             background: white;
             border-radius: 16px;
             padding: 25px;
+            margin-bottom: 20px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
         }
 
@@ -326,7 +327,7 @@
             background: #ef4444;
         }
 
-        select {
+        select, input, textarea {
             padding: 10px;
             border: 2px solid #e5e7eb;
             border-radius: 8px;
@@ -334,6 +335,24 @@
             color: #333;
             background: white;
         }
+
+        textarea { min-height: 88px; resize: vertical; }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .form-field { display: flex; flex-direction: column; gap: 6px; }
+        .form-field label { color: #4b5563; font-size: 12px; font-weight: 700; }
+        .form-field.wide { grid-column: 1 / -1; }
+        .help { color: #6b7280; font-size: 12px; line-height: 1.5; margin: 8px 0 14px; }
+        .mode-note {
+            background: #eef2ff; color: #4338ca; padding: 12px;
+            border-radius: 8px; font-size: 13px; margin-bottom: 14px;
+        }
+        .profile-actions { margin-top: 10px; }
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
@@ -373,12 +392,47 @@
         </div>
 
         <div class="card">
-            <h2>🚀 Швидкі дії</h2>
-            <div class="actions">
-                <select id="niche-select">
+            <h2>🚀 Нова генерація</h2>
+            <div class="mode-note" id="mode-note">
+                Звичайний режим: ролик без реклами та партнерських посилань.
+            </div>
+            <div class="form-grid">
+                <div class="form-field">
+                    <label for="profile-select">На який канал</label>
+                    <select id="profile-select" onchange="onProfileChange()">
+                        <option value="default">Основний канал</option>
+                    </select>
+                </div>
+                <div class="form-field">
+                    <label for="content-mode-select">Тип ролика</label>
+                    <select id="content-mode-select" onchange="onContentModeChange()">
+                        <option value="organic">Звичайний — як зараз</option>
+                        <option value="affiliate">Партнерський — для заробітку</option>
+                    </select>
+                </div>
+                <div class="form-field hidden" id="offer-field">
+                    <label for="offer-select">Що рекламувати</label>
+                    <select id="offer-select">
+                        <option value="">Спочатку додайте пропозицію</option>
+                    </select>
+                </div>
+                <div class="form-field">
+                    <label for="niche-select">Тематика</label>
+                    <select id="niche-select">
                     <option value="">Випадкова ніша</option>
                     <option value="">Завантаження ніш…</option>
-                </select>
+                    </select>
+                </div>
+                <div class="form-field">
+                    <label for="publish-scope-select">Куди відправити</label>
+                    <select id="publish-scope-select">
+                        <option value="youtube_only">Лише на вибраний YouTube</option>
+                        <option value="all_enabled">На всі підключені платформи</option>
+                        <option value="create_only">Тільки створити MP4</option>
+                    </select>
+                </div>
+            </div>
+            <div class="actions">
                 <button onclick="generateVideo()" id="generate-btn">
                     Згенерувати відео
                 </button>
@@ -392,13 +446,57 @@
         </div>
 
         <div class="card">
-            <h2>🌐 Канали публікації</h2>
+            <h2>▶️ Профілі YouTube-каналів</h2>
+            <p class="help">Створіть окремий профіль і підключіть до нього інший Google/YouTube-акаунт. Token одного каналу не використовується для іншого.</p>
+            <div id="channel-profiles" class="platform-grid">
+                <div class="loading">Завантаження каналів…</div>
+            </div>
+            <div class="actions" style="margin-top: 16px;">
+                <input id="new-profile-name" maxlength="80" placeholder="Наприклад: AI-сервіси UA">
+                <button onclick="createProfile()">+ Додати канал</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>💰 Партнерські пропозиції</h2>
+            <p class="help">Додавайте тільки власне схвалене affiliate/referral-посилання та перевірені функції сервісу. API-ключі сюди вставляти не можна.</p>
+            <div class="form-grid">
+                <div class="form-field">
+                    <label for="offer-profile-select">Канал</label>
+                    <select id="offer-profile-select" onchange="loadOffers()"></select>
+                </div>
+                <div class="form-field">
+                    <label for="offer-name">Назва AI-сервісу</label>
+                    <input id="offer-name" maxlength="100" placeholder="Назва сервісу">
+                </div>
+                <div class="form-field wide">
+                    <label for="offer-url">Ваше партнерське посилання</label>
+                    <input id="offer-url" type="url" placeholder="https://service.example/?ref=...">
+                </div>
+                <div class="form-field wide">
+                    <label for="offer-description">Що сервіс реально вміє</label>
+                    <textarea id="offer-description" maxlength="800" placeholder="Лише перевірені функції, без вигаданих цін і гарантій"></textarea>
+                </div>
+                <div class="form-field">
+                    <label for="offer-keywords">Ключові слова</label>
+                    <input id="offer-keywords" placeholder="монтаж, субтитри, shorts">
+                </div>
+                <div class="form-field">
+                    <label for="offer-cta">Заклик</label>
+                    <input id="offer-cta" placeholder="Посилання — в описі">
+                </div>
+            </div>
+            <div class="actions"><button onclick="createOffer()">+ Додати пропозицію</button></div>
+            <div id="affiliate-offers" class="platform-grid"></div>
+        </div>
+
+        <div class="card">
+            <h2>🌐 Інші платформи</h2>
             <div id="platforms-status" class="platform-grid">
                 <div class="loading">Перевірка підключень…</div>
             </div>
             <div class="youtube-status" style="margin-top: 16px;">
                 <small>Один чистий MP4 · окремий підпис для кожної платформи</small>
-                <a class="youtube-link" href="/youtube/connect">Підключити YouTube</a>
             </div>
         </div>
 
@@ -430,6 +528,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>
         let chart = null;
+        let channelProfiles = [];
+        let affiliateOffers = [];
         const platformNames = {
             youtube: '▶️ YouTube Shorts',
             tiktok: '🎵 TikTok',
@@ -441,6 +541,151 @@
             return String(value ?? '').replace(/[&<>'"]/g, character => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
             })[character]);
+        }
+
+        async function loadProfiles() {
+            try {
+                const currentQuick = document.getElementById('profile-select').value;
+                const currentOfferProfile = document.getElementById('offer-profile-select').value;
+                const response = await fetch('/api/channel-profiles', {cache: 'no-store'});
+                const data = await readJsonResponse(response);
+                if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+                channelProfiles = data.profiles || [];
+
+                const options = channelProfiles.map(profile => {
+                    const label = profile.youtube_channel_title || profile.name;
+                    const state = profile.connected ? '' : ' — не підключено';
+                    return `<option value="${escapeHtml(profile.profile_id)}">${escapeHtml(label + state)}</option>`;
+                }).join('');
+                const quick = document.getElementById('profile-select');
+                const offerProfile = document.getElementById('offer-profile-select');
+                quick.innerHTML = options;
+                offerProfile.innerHTML = options;
+                if (channelProfiles.some(item => item.profile_id === currentQuick)) quick.value = currentQuick;
+                if (channelProfiles.some(item => item.profile_id === currentOfferProfile)) {
+                    offerProfile.value = currentOfferProfile;
+                } else {
+                    offerProfile.value = quick.value;
+                }
+
+                document.getElementById('channel-profiles').innerHTML = channelProfiles.map(profile => `
+                    <div class="platform-card">
+                        <h4>${escapeHtml(profile.name)}</h4>
+                        <span class="platform-state ${profile.connected ? 'ready' : 'pending'}">
+                            ${profile.connected ? 'Підключено' : 'Потрібен Google-вхід'}
+                        </span>
+                        <p>${escapeHtml(profile.youtube_channel_title || 'YouTube-канал ще не визначено')}</p>
+                        <div class="profile-actions">
+                            <a class="youtube-link" href="/youtube/connect?profile_id=${encodeURIComponent(profile.profile_id)}">
+                                ${profile.connected ? 'Перепідключити' : 'Підключити YouTube'}
+                            </a>
+                        </div>
+                    </div>
+                `).join('');
+                renderOfferControls();
+            } catch (error) {
+                document.getElementById('channel-profiles').innerHTML = `<p class="loading">${escapeHtml(error.message)}</p>`;
+            }
+        }
+
+        async function createProfile() {
+            const input = document.getElementById('new-profile-name');
+            const name = input.value.trim();
+            if (!name) return alert('Вкажіть назву нового каналу');
+            try {
+                const response = await fetch('/api/channel-profiles', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name})
+                });
+                const data = await readJsonResponse(response);
+                if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+                input.value = '';
+                await loadProfiles();
+                document.getElementById('profile-select').value = data.profile.profile_id;
+                document.getElementById('offer-profile-select').value = data.profile.profile_id;
+                onProfileChange();
+                window.location.assign(`/youtube/connect?profile_id=${encodeURIComponent(data.profile.profile_id)}`);
+            } catch (error) {
+                alert(`✗ ${error.message}`);
+            }
+        }
+
+        async function loadOffers() {
+            try {
+                const response = await fetch('/api/affiliate-offers', {cache: 'no-store'});
+                const data = await readJsonResponse(response);
+                if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+                affiliateOffers = data.offers || [];
+                renderOfferControls();
+            } catch (error) {
+                document.getElementById('affiliate-offers').innerHTML = `<p class="loading">${escapeHtml(error.message)}</p>`;
+            }
+        }
+
+        function renderOfferControls() {
+            const quickProfile = document.getElementById('profile-select').value;
+            const quickOffers = affiliateOffers.filter(item => item.profile_id === quickProfile);
+            const offerSelect = document.getElementById('offer-select');
+            const currentOffer = offerSelect.value;
+            offerSelect.innerHTML = quickOffers.length
+                ? quickOffers.map(item => `<option value="${escapeHtml(item.offer_id)}">${escapeHtml(item.name)}</option>`).join('')
+                : '<option value="">Немає пропозицій для цього каналу</option>';
+            if (quickOffers.some(item => item.offer_id === currentOffer)) offerSelect.value = currentOffer;
+
+            const manageProfile = document.getElementById('offer-profile-select').value || quickProfile;
+            const manageOffers = affiliateOffers.filter(item => item.profile_id === manageProfile);
+            document.getElementById('affiliate-offers').innerHTML = manageOffers.length
+                ? manageOffers.map(item => `
+                    <div class="platform-card">
+                        <h4>${escapeHtml(item.name)}</h4>
+                        <span class="platform-state ready">Активна</span>
+                        <p>${escapeHtml(item.description)}</p>
+                        <p style="margin-top:8px; word-break:break-all;">${escapeHtml(item.url)}</p>
+                    </div>
+                `).join('')
+                : '<p class="loading">Для цього каналу ще немає партнерських пропозицій</p>';
+        }
+
+        async function createOffer() {
+            const payload = {
+                profile_id: document.getElementById('offer-profile-select').value,
+                name: document.getElementById('offer-name').value.trim(),
+                url: document.getElementById('offer-url').value.trim(),
+                description: document.getElementById('offer-description').value.trim(),
+                keywords: document.getElementById('offer-keywords').value.trim(),
+                cta: document.getElementById('offer-cta').value.trim()
+            };
+            try {
+                const response = await fetch('/api/affiliate-offers', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await readJsonResponse(response);
+                if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+                ['offer-name', 'offer-url', 'offer-description', 'offer-keywords', 'offer-cta']
+                    .forEach(id => document.getElementById(id).value = '');
+                await loadOffers();
+                document.getElementById('profile-select').value = payload.profile_id;
+                document.getElementById('offer-select').value = data.offer.offer_id;
+                document.getElementById('content-mode-select').value = 'affiliate';
+                onContentModeChange();
+                alert('✓ Партнерську пропозицію додано');
+            } catch (error) {
+                alert(`✗ ${error.message}`);
+            }
+        }
+
+        function onProfileChange() {
+            document.getElementById('offer-profile-select').value = document.getElementById('profile-select').value;
+            renderOfferControls();
+        }
+
+        function onContentModeChange() {
+            const affiliate = document.getElementById('content-mode-select').value === 'affiliate';
+            document.getElementById('offer-field').classList.toggle('hidden', !affiliate);
+            document.getElementById('mode-note').textContent = affiliate
+                ? 'Партнерський режим: сценарій природно пояснить користь вибраного сервісу, а в опис буде додано ваше посилання та disclosure.'
+                : 'Звичайний режим: ролик без реклами та партнерських посилань.';
         }
 
         async function loadStats() {
@@ -551,7 +796,7 @@
                     <div class="video-item">
                         <div class="video-info">
                             <h4>${escapeHtml(video.title)}</h4>
-                            <p>${escapeHtml(video.video_id)} · ${new Date(video.created_at).toLocaleString('uk-UA')}</p>
+                            <p>${escapeHtml(video.video_id)} · ${video.content_mode === 'affiliate' ? '💰 партнерський' : '🎬 звичайний'} · ${escapeHtml(video.profile_id || 'default')} · ${new Date(video.created_at).toLocaleString('uk-UA')}</p>
                         </div>
                         <div>
                             ${links || (video.youtube_url ? `
@@ -613,6 +858,15 @@
         async function generateVideo() {
             const btn = document.getElementById('generate-btn');
             const niche = document.getElementById('niche-select').value;
+            const contentMode = document.getElementById('content-mode-select').value;
+            const profileId = document.getElementById('profile-select').value;
+            const offerId = document.getElementById('offer-select').value;
+            const publishScope = document.getElementById('publish-scope-select').value;
+
+            if (contentMode === 'affiliate' && !offerId) {
+                alert('Спочатку додайте й виберіть партнерську пропозицію для цього каналу');
+                return;
+            }
 
             btn.disabled = true;
             btn.textContent = 'Генерується...';
@@ -621,7 +875,14 @@
                 const response = await fetch('/api/generate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({niche: niche || null, count: 1})
+                    body: JSON.stringify({
+                        niche: niche || null,
+                        count: 1,
+                        content_mode: contentMode,
+                        profile_id: profileId,
+                        affiliate_offer_id: contentMode === 'affiliate' ? offerId : null,
+                        publish_scope: publishScope
+                    })
                 });
 
                 const data = await readJsonResponse(response);
@@ -710,12 +971,15 @@
             loadSchedule();
             loadGeneratedVideos();
             loadPlatformStatus();
+            loadProfiles();
+            loadOffers();
             document.getElementById('last-update').textContent = new Date().toLocaleTimeString('uk-UA');
         }
 
         // Ініціалізація
         refreshDashboard();
         loadNiches();
+        onContentModeChange();
 
         // Авто-оновлення кожні 30 секунд
         setInterval(refreshDashboard, 30000);

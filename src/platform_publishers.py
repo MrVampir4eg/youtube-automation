@@ -62,6 +62,13 @@ def build_platform_metadata(script: Dict, seo: Dict) -> Dict[str, Dict]:
     hashtags = _unique(_clean_hashtag(str(value)) for value in raw_tags)
     hashtags = [tag for tag in hashtags if tag][:5]
     tag_line = " ".join(hashtags)
+    affiliate = seo.get("affiliate") or {}
+    affiliate_note = ""
+    if affiliate:
+        affiliate_note = "\n\n".join(filter(None, [
+            f"🔗 {affiliate.get('name')}: {affiliate.get('url')}",
+            affiliate.get('disclosure'),
+        ]))
 
     youtube_description = str(seo.get("description") or "")
     if "#Shorts" not in youtube_description:
@@ -72,12 +79,14 @@ def build_platform_metadata(script: Dict, seo: Dict) -> Dict[str, Dict]:
         payoff,
         "Збережи, щоб не загубити, і надішли тому, кого це здивує.",
         tag_line,
+        affiliate_note,
     ]))[:2200]
 
     tiktok_caption = " ".join(filter(None, [
         hook.rstrip(".!?"),
         "Додивись до кінця й напиши свою версію.",
         tag_line,
+        affiliate.get("disclosure") if affiliate else "",
     ]))[:2200]
 
     facebook_description = "\n\n".join(filter(None, [
@@ -85,6 +94,7 @@ def build_platform_metadata(script: Dict, seo: Dict) -> Dict[str, Dict]:
         payoff,
         "А ти про це знав/знала? Поділись думкою в коментарях.",
         tag_line,
+        affiliate_note,
     ]))[:5000]
 
     return {
@@ -519,18 +529,28 @@ class UniversalPublisher:
         video_path: Path,
         video_id: str,
         metadata: Dict[str, Dict],
+        youtube_uploader=None,
+        platforms: Optional[Iterable[str]] = None,
     ) -> Dict[str, Dict]:
         results: Dict[str, Dict] = {}
-        for platform in enabled_platforms():
+        selected_platforms = (
+            _unique(platforms) if platforms is not None else enabled_platforms()
+        )
+        selected_platforms = [
+            item for item in selected_platforms
+            if item in {"youtube", "tiktok", "instagram", "facebook"}
+        ]
+        selected_youtube = youtube_uploader or self.youtube
+        for platform in selected_platforms:
             try:
                 if platform == "youtube":
-                    if not self.youtube or not self.youtube.is_configured():
+                    if not selected_youtube or not selected_youtube.is_configured():
                         result = PublishResult(
                             platform, "skipped", "YouTube ще не підключено"
                         )
                     else:
                         values = metadata[platform]
-                        uploaded = self.youtube.upload_video(
+                        uploaded = selected_youtube.upload_video(
                             video_path=video_path,
                             title=values["title"],
                             description=values["description"],
