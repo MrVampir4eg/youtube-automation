@@ -12,7 +12,6 @@ from datetime import datetime
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
@@ -22,9 +21,9 @@ logger = logging.getLogger(__name__)
 # Scopes для YouTube Data API
 SCOPES = [
     'https://www.googleapis.com/auth/youtube.upload',
-    'https://www.googleapis.com/auth/youtube',
     'https://www.googleapis.com/auth/youtube.readonly'
 ]
+TOKEN_URI = 'https://oauth2.googleapis.com/token'
 
 
 class YouTubeUploader:
@@ -35,8 +34,8 @@ class YouTubeUploader:
         self.client_secret = os.getenv('YOUTUBE_CLIENT_SECRET')
         self.redirect_uri = os.getenv('YOUTUBE_REDIRECT_URI', 'http://localhost:5000/oauth2callback')
 
-        self.credentials_file = Path('config/youtube_credentials.json')
-        self.token_file = Path('config/youtube_token.pickle')
+        project_root = Path(__file__).resolve().parents[1]
+        self.token_file = project_root / 'config' / 'youtube_token.pickle'
 
         self.youtube = None
 
@@ -49,42 +48,80 @@ class YouTubeUploader:
         if self.youtube is None:
             self._authenticate()
 
+    def get_oauth_client_config(self) -> Dict:
+        """Конфігурація Google OAuth для web application."""
+        if not self.client_id or not self.client_secret:
+            raise RuntimeError(
+                'Додайте YOUTUBE_CLIENT_ID і YOUTUBE_CLIENT_SECRET у Render Environment'
+            )
+
+        return {
+            'web': {
+                'client_id': self.client_id,
+                'client_secret': self.client_secret,
+                'redirect_uris': [self.redirect_uri],
+                'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+                'token_uri': TOKEN_URI
+            }
+        }
+
+    def is_configured(self) -> bool:
+        """Чи є довгостроковий token для автозавантаження."""
+        return bool(
+            self.client_id
+            and self.client_secret
+            and (os.getenv('YOUTUBE_REFRESH_TOKEN') or self.token_file.exists())
+        )
+
+    def set_credentials(self, creds: Credentials):
+        """Зберегти OAuth credentials для поточного instance."""
+        self.token_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.token_file.open('wb') as token:
+            pickle.dump(creds, token)
+        self.youtube = build(
+            'youtube',
+            'v3',
+            credentials=creds,
+            cache_discovery=False
+        )
+
     def _authenticate(self):
-        """OAuth 2.0 авторизація"""
+        """OAuth 2.0 через refresh token з Render Environment."""
+        self.get_oauth_client_config()
         creds = None
 
-        # Перевіряємо чи є збережений token
-        if self.token_file.exists():
-            with open(self.token_file, 'rb') as token:
-                creds = pickle.load(token)
+        refresh_token = os.getenv('YOUTUBE_REFRESH_TOKEN')
+        if refresh_token:
+            creds = Credentials(
+                token=None,
+                refresh_token=refresh_token,
+                token_uri=TOKEN_URI,
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                scopes=SCOPES
+            )
 
-        # Якщо немає валідних credentials, робимо auth flow
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                logger.info("Refreshing access token...")
-                creds.refresh(Request())
-            else:
-                logger.info("Starting OAuth flow...")
-                flow = InstalledAppFlow.from_client_config(
-                    {
-                        "installed": {
-                            "client_id": self.client_id,
-                            "client_secret": self.client_secret,
-                            "redirect_uris": [self.redirect_uri],
-                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                            "token_uri": "https://oauth2.googleapis.com/token"
-                        }
-                    },
-                    SCOPES
-                )
-                creds = flow.run_local_server(port=5000)
+        # Token-файл дає змогу завантажувати одразу після callback,
+        # але для переживання redeploy token треба зберегти в Render.
+        if creds is None and self.token_file.exists():
+            try:
+                with self.token_file.open('rb') as token:
+                    creds = pickle.load(token)
+            except Exception as exc:
+                logger.warning(f'Failed to load YouTube token file: {exc}')
 
-            # Зберігаємо credentials
-            with open(self.token_file, 'wb') as token:
-                pickle.dump(creds, token)
+        if creds is None:
+            raise RuntimeError(
+                'Спочатку підключіть YouTube на сторінці /youtube/connect'
+            )
 
-        # Створюємо YouTube service
-        self.youtube = build('youtube', 'v3', credentials=creds)
+        if not creds.valid:
+            if not creds.refresh_token:
+                raise RuntimeError('Немає YouTube refresh token; підключіть канал повторно')
+            logger.info('Refreshing YouTube access token...')
+            creds.refresh(Request())
+
+        self.set_credentials(creds)
         logger.info("✓ YouTube API authenticated")
 
     def upload_video(self,
@@ -93,7 +130,7 @@ class YouTubeUploader:
                     description: str,
                     tags: list,
                     category_id: str = '22',
-                    privacy_status: str = 'public',
+                    privacy_status: str = 'private',
                     made_for_kids: bool = False) -> Dict:
         """
         Завантаження відео на YouTube
@@ -131,6 +168,7 @@ class YouTubeUploader:
             }
 
         self._ensure_authenticated()
+        privacy_status = os.getenv('YOUTUBE_PRIVACY_STATUS', privacy_status)
 
         logger.info(f"Uploading video: {video_path.name}")
         logger.info(f"Title: {title[:50]}...")
@@ -148,8 +186,7 @@ class YouTubeUploader:
                 },
                 'status': {
                     'privacyStatus': privacy_status,
-                    'selfDeclaredMadeForKids': made_for_kids,
-                    'madeForKids': made_for_kids
+                    'selfDeclaredMadeForKids': made_for_kids
                 }
             }
 
@@ -197,7 +234,10 @@ class YouTubeUploader:
                 'video_id': video_id,
                 'url': video_url,
                 'title': title,
-                'published_at': response['snippet']['publishedAt'],
+                'published_at': response.get('snippet', {}).get(
+                    'publishedAt',
+                    datetime.utcnow().isoformat()
+                ),
                 'privacy_status': privacy_status
             }
 

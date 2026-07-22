@@ -166,6 +166,39 @@
         .badge.tech { background: #dbeafe; color: #2563eb; }
         .badge.productivity { background: #fce7f3; color: #db2777; }
 
+        .download-link {
+            display: inline-block;
+            background: #10b981;
+            color: white;
+            text-decoration: none;
+            padding: 9px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .download-link:hover {
+            background: #059669;
+        }
+
+        .youtube-link {
+            display: inline-block;
+            background: #dc2626;
+            color: white;
+            text-decoration: none;
+            padding: 9px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .youtube-status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }
+
         .actions {
             display: flex;
             gap: 10px;
@@ -312,6 +345,19 @@
             </div>
         </div>
 
+        <div class="card">
+            <h2>📺 YouTube</h2>
+            <div class="youtube-status">
+                <div id="youtube-status">Перевірка…</div>
+                <a class="youtube-link" href="/youtube/connect">Підключити YouTube</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📥 Готові відео</h2>
+            <div id="generated-videos" class="loading">Поки немає згенерованих відео</div>
+        </div>
+
         <div class="content-grid">
             <div class="card">
                 <h2>🔥 Топ відео</h2>
@@ -424,6 +470,57 @@
             }
         }
 
+        async function loadGeneratedVideos() {
+            try {
+                const response = await fetch('/api/videos?limit=10', {cache: 'no-store'});
+                const data = await readJsonResponse(response);
+                if (!response.ok) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+
+                const html = data.videos.map(video => `
+                    <div class="video-item">
+                        <div class="video-info">
+                            <h4>${video.title}</h4>
+                            <p>${video.video_id} · ${new Date(video.created_at).toLocaleString('uk-UA')}</p>
+                        </div>
+                        <div>
+                            ${video.youtube_url ? `
+                                <a class="youtube-link" href="${video.youtube_url}" target="_blank" rel="noopener">
+                                    YouTube
+                                </a>
+                            ` : ''}
+                            <a class="download-link" href="${video.download_url}">
+                                ⬇️ MP4
+                            </a>
+                        </div>
+                    </div>
+                `).join('');
+
+                document.getElementById('generated-videos').innerHTML =
+                    html || '<p class="loading">Поки немає згенерованих відео</p>';
+            } catch (error) {
+                console.error('Failed to load generated videos:', error);
+            }
+        }
+
+        async function loadYouTubeStatus() {
+            try {
+                const response = await fetch('/api/youtube/status', {cache: 'no-store'});
+                const data = await readJsonResponse(response);
+                const status = document.getElementById('youtube-status');
+                if (data.connected && data.auto_upload) {
+                    status.innerHTML = '✅ Підключено · автозавантаження ввімкнено';
+                } else if (data.connected) {
+                    status.innerHTML = '⚠️ Підключено, але AUTO_UPLOAD=False';
+                } else {
+                    status.innerHTML = '❌ YouTube ще не підключено';
+                }
+            } catch (error) {
+                console.error('Failed to load YouTube status:', error);
+            }
+        }
+
         async function generateVideo() {
             const btn = document.getElementById('generate-btn');
             const niche = document.getElementById('niche-select').value;
@@ -445,7 +542,18 @@
 
                 const result = await waitForGeneration(data.job_id, btn);
                 const video = result.videos[0];
-                alert(`✓ Відео створено!\nID: ${video.video_id}`);
+                if (video.upload_error) {
+                    alert(`⚠️ MP4 створено, але YouTube upload не вдався:\n${video.upload_error}`);
+                } else if (video.url) {
+                    alert(`✓ Відео створено і завантажено на YouTube!\n${video.url}`);
+                } else {
+                    const shouldDownload = confirm(
+                        `✓ Відео створено!\nID: ${video.video_id}\n\nYouTube auto-upload вимкнено. Завантажити MP4?`
+                    );
+                    if (shouldDownload) {
+                        window.location.assign(video.download_url);
+                    }
+                }
                 refreshDashboard();
 
             } catch (error) {
@@ -506,6 +614,8 @@
         function refreshDashboard() {
             loadStats();
             loadSchedule();
+            loadGeneratedVideos();
+            loadYouTubeStatus();
             document.getElementById('last-update').textContent = new Date().toLocaleTimeString('uk-UA');
         }
 

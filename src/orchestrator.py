@@ -123,20 +123,24 @@ class VideoProducer:
 
             # 5. ЗАВАНТАЖЕННЯ НА YOUTUBE
             youtube_result = None
+            youtube_error = None
             if auto_upload is None:
-                auto_upload = os.getenv('AUTO_UPLOAD', 'True').lower() == 'true'
+                auto_upload = os.getenv('AUTO_UPLOAD', 'False').lower() == 'true'
 
             if auto_upload:
                 logger.info("Step 5/5: Uploading to YouTube...")
-                youtube_result = self.youtube.upload_video(
-                    video_path=video_result['video_path'],
-                    title=seo['title'],
-                    description=seo['description'],
-                    tags=seo['tags'],
-                    category_id=seo['category_id']
-                )
-
-                logger.info(f"  URL: {youtube_result['url']}")
+                try:
+                    youtube_result = self.youtube.upload_video(
+                        video_path=video_result['video_path'],
+                        title=seo['title'],
+                        description=seo['description'],
+                        tags=seo['tags'],
+                        category_id=seo['category_id']
+                    )
+                    logger.info(f"  URL: {youtube_result['url']}")
+                except Exception as exc:
+                    youtube_error = str(exc)
+                    logger.error(f"YouTube upload failed; local MP4 preserved: {exc}")
             else:
                 logger.info("Step 5/5: Skipping upload (auto_upload=False)")
 
@@ -174,6 +178,7 @@ class VideoProducer:
                 'video_path': video_result['video_path'],
                 'youtube_url': youtube_result['url'] if youtube_result else None,
                 'youtube_video_id': youtube_result['video_id'] if youtube_result else None,
+                'youtube_error': youtube_error,
                 'niche': script['niche'],
                 'title': seo['title'],
                 'duration': video_result['duration'],

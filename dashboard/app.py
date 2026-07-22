@@ -4,20 +4,36 @@ Flask Dashboard
 """
 
 import os
+import secrets
 import uuid
+from pathlib import Path
 from threading import Lock, Thread
-from flask import Flask, render_template, jsonify, request, redirect, url_for
+from flask import (
+    Flask, render_template, jsonify, request, redirect, url_for,
+    send_file, session, make_response
+)
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import json
+from google_auth_oauthlib.flow import Flow
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from src.orchestrator import VideoProducer
 from src.scheduler import AutomationScheduler
+from src.youtube_uploader import SCOPES
 from database.models import Database
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 CORS(app)
-app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-this')
+app.secret_key = os.getenv('SECRET_KEY') or secrets.token_hex(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.getenv('RENDER', 'False').lower() == 'true'
+)
+project_root = Path(__file__).resolve().parents[1]
+video_output_dir = (project_root / 'output' / 'videos').resolve()
 
 # Ініціалізація компонентів
 producer = VideoProducer()
@@ -53,7 +69,9 @@ def _run_generation_job(job_id, count, niche):
             videos = [{
                 'video_id': result['video_id'],
                 'title': result['title'],
-                'url': result.get('youtube_url')
+                'url': result.get('youtube_url'),
+                'upload_error': result.get('youtube_error'),
+                'download_url': f"/api/videos/{result['video_id']}/download"
             } for result in results if 'error' not in result]
 
             errors = [result['error'] for result in results if 'error' in result]
@@ -79,6 +97,92 @@ def _run_generation_job(job_id, count, niche):
 def index():
     """Головна сторінка"""
     return render_template('index.html')
+
+
+@app.route('/youtube/connect')
+def youtube_connect():
+    """Почати Google OAuth для YouTube-каналу."""
+    uploader = scheduler.producer.youtube
+    try:
+        redirect_uri = url_for('oauth2callback', _external=True, _scheme='https')
+        flow = Flow.from_client_config(
+            uploader.get_oauth_client_config(),
+            scopes=SCOPES,
+            redirect_uri=redirect_uri
+        )
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'
+        )
+        session['youtube_oauth_state'] = state
+        session['youtube_redirect_uri'] = redirect_uri
+        return redirect(authorization_url)
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/oauth2callback')
+def oauth2callback():
+    """Прийняти Google OAuth callback і видати refresh token власнику."""
+    if request.args.get('error'):
+        return jsonify({
+            'success': False,
+            'error': request.args.get('error_description') or request.args['error']
+        }), 400
+
+    state = session.pop('youtube_oauth_state', None)
+    redirect_uri = session.pop(
+        'youtube_redirect_uri',
+        url_for('oauth2callback', _external=True, _scheme='https')
+    )
+    if not state:
+        return jsonify({
+            'success': False,
+            'error': 'OAuth session expired. Open /youtube/connect again.'
+        }), 400
+
+    uploader = scheduler.producer.youtube
+    try:
+        flow = Flow.from_client_config(
+            uploader.get_oauth_client_config(),
+            scopes=SCOPES,
+            state=state,
+            redirect_uri=redirect_uri
+        )
+        flow.fetch_token(authorization_response=request.url)
+        credentials = flow.credentials
+        if not credentials.refresh_token:
+            raise RuntimeError(
+                'Google did not return a refresh token. Revoke app access and connect again.'
+            )
+
+        # Поточний instance одразу готовий до upload. Для redeploy
+        # користувач зберігає refresh token у Render Environment.
+        scheduler.producer.youtube.set_credentials(credentials)
+        producer.youtube.set_credentials(credentials)
+        os.environ['AUTO_UPLOAD'] = 'True'
+
+        response = make_response(render_template(
+            'youtube_connected.html',
+            refresh_token=credentials.refresh_token
+        ))
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
+        response.headers['Pragma'] = 'no-cache'
+        return response
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/youtube/status')
+def youtube_status():
+    """Стан YouTube OAuth і автозавантаження."""
+    uploader = scheduler.producer.youtube
+    return jsonify({
+        'success': True,
+        'connected': uploader.is_configured(),
+        'auto_upload': os.getenv('AUTO_UPLOAD', 'False').lower() == 'true'
+    })
 
 
 @app.route('/api/stats')
@@ -129,7 +233,8 @@ def list_videos():
             'duration': v['duration'],
             'youtube_url': v.get('youtube_url'),
             'created_at': v['created_at'],
-            'ai_cost': v.get('ai_cost', 0)
+            'ai_cost': v.get('ai_cost', 0),
+            'download_url': f"/api/videos/{v['video_id']}/download"
         } for v in videos]
     })
 
@@ -145,12 +250,48 @@ def get_video(video_id):
     return jsonify(performance)
 
 
+@app.route('/api/videos/<video_id>/download')
+def download_video(video_id):
+    """Завантажити згенерований MP4 з поточного Render instance."""
+    video = db.get_video(video_id)
+    if not video or not video.get('video_path'):
+        return jsonify({'success': False, 'error': 'Відео не знайдено'}), 404
+
+    stored_path = Path(video['video_path'])
+    video_path = (
+        stored_path.resolve()
+        if stored_path.is_absolute()
+        else (project_root / stored_path).resolve()
+    )
+
+    if video_output_dir not in video_path.parents or not video_path.is_file():
+        return jsonify({
+            'success': False,
+            'error': 'Файл більше немає на Render. Згенеруйте відео повторно.'
+        }), 404
+
+    return send_file(
+        video_path,
+        mimetype='video/mp4',
+        as_attachment=True,
+        download_name=f'{video_id}.mp4',
+        conditional=True
+    )
+
+
 @app.route('/api/generate', methods=['POST'])
 def generate_video():
     """Запустити фонову генерацію відео."""
     data = request.get_json(silent=True) or {}
     niche = data.get('niche')
     count = max(1, min(int(data.get('count', 1)), 1))
+
+    auto_upload = os.getenv('AUTO_UPLOAD', 'False').lower() == 'true'
+    if auto_upload and not scheduler.producer.youtube.is_configured():
+        return jsonify({
+            'success': False,
+            'error': 'Спочатку підключіть YouTube кнопкою на Dashboard'
+        }), 409
 
     with generation_jobs_lock:
         active_job = next((

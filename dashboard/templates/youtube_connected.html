@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube підключено</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #111827; color: #f9fafb; margin: 0; padding: 30px; }
+        .card { max-width: 760px; margin: 30px auto; background: #1f2937; padding: 28px; border-radius: 16px; }
+        h1 { color: #34d399; }
+        textarea { width: 100%; box-sizing: border-box; min-height: 110px; padding: 12px; border-radius: 8px; }
+        button, a { display: inline-block; padding: 12px 18px; margin: 12px 8px 0 0; border: 0; border-radius: 8px; text-decoration: none; cursor: pointer; }
+        button { background: #10b981; color: white; }
+        a { background: #374151; color: white; }
+        code { color: #fbbf24; }
+        .warning { color: #fbbf24; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>✓ YouTube підключено</h1>
+        <p>Скопіюй refresh token нижче. Не надсилай його в чат і не показуй на скриншотах.</p>
+        <textarea id="token" readonly>{{ refresh_token }}</textarea>
+        <button onclick="copyToken()">Скопіювати token</button>
+
+        <p>У Render → Environment додай:</p>
+        <p><code>YOUTUBE_REFRESH_TOKEN</code> = скопійований token</p>
+        <p><code>AUTO_UPLOAD</code> = <code>True</code></p>
+        <p><code>YOUTUBE_PRIVACY_STATUS</code> = <code>private</code></p>
+        <p class="warning">Після Save Changes Render перезапустить сервіс. Token дасть змогу автоматично завантажувати нові відео.</p>
+        <a href="/">Повернутися до Dashboard</a>
+    </div>
+    <script>
+        async function copyToken() {
+            await navigator.clipboard.writeText(document.getElementById('token').value);
+            alert('Token скопійовано');
+        }
+    </script>
+</body>
+</html>
