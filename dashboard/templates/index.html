@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Shorts Automation Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-card h3 {
+            color: #999;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .stat-card .value {
+            color: #333;
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .label {
+            color: #666;
+            font-size: 13px;
+        }
+
+        .stat-card.positive .value {
+            color: #10b981;
+        }
+
+        .stat-card.negative .value {
+            color: #ef4444;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 1024px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        .card h2 {
+            color: #333;
+            font-size: 20px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f3f4f6;
+        }
+
+        .video-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: background 0.2s;
+        }
+
+        .video-item:hover {
+            background: #f9fafb;
+        }
+
+        .video-info h4 {
+            color: #333;
+            font-size: 15px;
+            margin-bottom: 5px;
+        }
+
+        .video-info p {
+            color: #999;
+            font-size: 12px;
+        }
+
+        .video-stats {
+            text-align: right;
+        }
+
+        .video-stats .views {
+            color: #667eea;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .video-stats .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-top: 5px;
+        }
+
+        .badge.motivation { background: #fef3c7; color: #d97706; }
+        .badge.finance { background: #dcfce7; color: #16a34a; }
+        .badge.history { background: #e0e7ff; color: #6366f1; }
+        .badge.tech { background: #dbeafe; color: #2563eb; }
+        .badge.productivity { background: #fce7f3; color: #db2777; }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102,126,234,0.4);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .chart-container {
+            height: 300px;
+            margin-top: 20px;
+        }
+
+        .schedule-item {
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .schedule-item h4 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+
+        .schedule-item p {
+            color: #667eea;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-indicator.active {
+            background: #10b981;
+            box-shadow: 0 0 10px rgba(16,185,129,0.5);
+        }
+
+        .status-indicator.inactive {
+            background: #ef4444;
+        }
+
+        select {
+            padding: 10px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #333;
+            background: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 YouTube Shorts Automation</h1>
+            <p>
+                <span class="status-indicator active"></span>
+                Система активна | Останнє оновлення: <span id="last-update">--:--</span>
+            </p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Всього відео</h3>
+                <div class="value" id="total-videos">0</div>
+                <div class="label">створено</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Опубліковано</h3>
+                <div class="value" id="uploaded-videos">0</div>
+                <div class="label">на YouTube</div>
+            </div>
+
+            <div class="stat-card positive">
+                <h3>Загальні перегляди</h3>
+                <div class="value" id="total-views">0</div>
+                <div class="label">views</div>
+            </div>
+
+            <div class="stat-card negative">
+                <h3>Витрати AI</h3>
+                <div class="value">$<span id="total-cost">0.00</span></div>
+                <div class="label">всього</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🚀 Швидкі дії</h2>
+            <div class="actions">
+                <select id="niche-select">
+                    <option value="">Випадкова ніша</option>
+                    <option value="motivation">Мотивація</option>
+                    <option value="finance">Фінанси</option>
+                    <option value="history">Історія</option>
+                    <option value="tech">Tech</option>
+                    <option value="productivity">Продуктивність</option>
+                </select>
+                <button onclick="generateVideo()" id="generate-btn">
+                    Згенерувати відео
+                </button>
+                <button onclick="refreshAnalytics()">
+                    Оновити аналітику
+                </button>
+                <button onclick="refreshDashboard()">
+                    🔄 Оновити
+                </button>
+            </div>
+        </div>
+
+        <div class="content-grid">
+            <div class="card">
+                <h2>🔥 Топ відео</h2>
+                <div id="top-videos" class="loading">Завантаження...</div>
+            </div>
+
+            <div class="card">
+                <h2>📅 Розклад</h2>
+                <div id="schedule" class="loading">Завантаження...</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📊 Статистика за тиждень</h2>
+            <div class="chart-container">
+                <canvas id="statsChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        let chart = null;
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+
+                // Оновлення статистики
+                document.getElementById('total-videos').textContent = data.total.total_videos;
+                document.getElementById('uploaded-videos').textContent = data.total.uploaded_videos;
+                document.getElementById('total-cost').textContent = data.total.total_cost.toFixed(2);
+
+                // Топ відео
+                const topVideosHtml = data.top_videos.map(v => `
+                    <div class="video-item">
+                        <div class="video-info">
+                            <h4>${v.title}</h4>
+                            <p>${v.niche}</p>
+                        </div>
+                        <div class="video-stats">
+                            <div class="views">${v.views.toLocaleString()}</div>
+                            <div class="badge ${v.niche}">${v.niche}</div>
+                        </div>
+                    </div>
+                `).join('');
+
+                document.getElementById('top-videos').innerHTML = topVideosHtml || '<p class="loading">Немає даних</p>';
+
+                // Графік
+                if (chart) chart.destroy();
+
+                const ctx = document.getElementById('statsChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.daily_chart.dates,
+                        datasets: [{
+                            label: 'Перегляди',
+                            data: data.daily_chart.views,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102,126,234,0.1)',
+                            tension: 0.4
+                        }, {
+                            label: 'Дохід ($)',
+                            data: data.daily_chart.revenue,
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16,185,129,0.1)',
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        async function loadSchedule() {
+            try {
+                const response = await fetch('/api/schedule');
+                const data = await response.json();
+
+                const scheduleHtml = Object.entries(data.jobs).map(([name, info]) => `
+                    <div class="schedule-item">
+                        <h4>${name}</h4>
+                        <p>${info.next_run ? new Date(info.next_run).toLocaleString('uk-UA') : 'Не заплановано'}</p>
+                    </div>
+                `).join('');
+
+                document.getElementById('schedule').innerHTML = scheduleHtml;
+
+            } catch (error) {
+                console.error('Failed to load schedule:', error);
+            }
+        }
+
+        async function generateVideo() {
+            const btn = document.getElementById('generate-btn');
+            const niche = document.getElementById('niche-select').value;
+
+            btn.disabled = true;
+            btn.textContent = 'Генерується...';
+
+            try {
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({niche: niche || null, count: 1})
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`✓ Відео створено!\nID: ${data.videos[0].video_id}`);
+                    refreshDashboard();
+                } else {
+                    alert(`✗ Помилка: ${data.error}`);
+                }
+
+            } catch (error) {
+                alert(`✗ Помилка: ${error.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Згенерувати відео';
+            }
+        }
+
+        async function refreshAnalytics() {
+            try {
+                await fetch('/api/analytics/refresh', {method: 'POST'});
+                alert('✓ Аналітика оновлюється...');
+                setTimeout(refreshDashboard, 5000);
+            } catch (error) {
+                alert(`✗ Помилка: ${error.message}`);
+            }
+        }
+
+        function refreshDashboard() {
+            loadStats();
+            loadSchedule();
+            document.getElementById('last-update').textContent = new Date().toLocaleTimeString('uk-UA');
+        }
+
+        // Ініціалізація
+        refreshDashboard();
+
+        // Авто-оновлення кожні 30 секунд
+        setInterval(refreshDashboard, 30000);
+    </script>
+</body>
+</html>

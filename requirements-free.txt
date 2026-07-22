@@ -1,0 +1,39 @@
+# БЕЗКОШТОВНА ВЕРСІЯ - Requirements
+# Всі залежності БЕЗКОШТОВНІ!
+
+# Core
+python-dotenv==1.0.0
+flask==3.0.0
+flask-cors==4.0.0
+requests==2.31.0
+
+# YouTube API (безкоштовно)
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.131.0
+
+# Video Processing
+moviepy==1.0.3
+Pillow==10.3.0
+
+# БЕЗКОШТОВНА озвучка
+gTTS==2.5.1
+pyttsx3==2.90  # Опціонально - офлайн озвучка
+
+# Database
+sqlalchemy==2.0.30
+
+# Scheduling
+APScheduler==3.10.4
+
+# Utils
+pyyaml==6.0.1
+python-dateutil==2.9.0
+pytz==2024.1
+beautifulsoup4==4.12.3
+
+# ЗАМІСТЬ OpenAI/Anthropic - використовуємо БЕЗКОШТОВНІ API:
+# Groq API - безкоштовно! https://groq.com/
+# Together AI - безкоштовно! https://together.ai/
+# (API ключі отримати на сайтах)
