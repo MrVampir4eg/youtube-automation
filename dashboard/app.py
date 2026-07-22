@@ -4,6 +4,8 @@ Flask Dashboard
 """
 
 import os
+import uuid
+from threading import Lock, Thread
 from flask import Flask, render_template, jsonify, request, redirect, url_for
 from flask_cors import CORS
 from datetime import datetime, timedelta
@@ -24,6 +26,53 @@ db = Database()
 
 # Запуск scheduler
 scheduler.start()
+
+# Ручна генерація виконується у фоні, щоб Render не обривав
+# довгий HTTP-запит під час рендерингу.
+generation_jobs = {}
+generation_jobs_lock = Lock()
+generation_worker_lock = Lock()
+
+
+def _update_generation_job(job_id, **updates):
+    with generation_jobs_lock:
+        generation_jobs[job_id].update(updates)
+
+
+def _run_generation_job(job_id, count, niche):
+    """Фонова генерація одного завдання за раз."""
+    with generation_worker_lock:
+        _update_generation_job(
+            job_id,
+            status='running',
+            started_at=datetime.utcnow().isoformat()
+        )
+
+        try:
+            results = scheduler.trigger_manual_generation(count=count, niche=niche)
+            videos = [{
+                'video_id': result['video_id'],
+                'title': result['title'],
+                'url': result.get('youtube_url')
+            } for result in results if 'error' not in result]
+
+            errors = [result['error'] for result in results if 'error' in result]
+            if not videos:
+                raise RuntimeError('; '.join(errors) or 'Відео не створено')
+
+            _update_generation_job(
+                job_id,
+                status='completed',
+                videos=videos,
+                completed_at=datetime.utcnow().isoformat()
+            )
+        except Exception as exc:
+            _update_generation_job(
+                job_id,
+                status='failed',
+                error=str(exc),
+                completed_at=datetime.utcnow().isoformat()
+            )
 
 
 @app.route('/')
@@ -98,28 +147,56 @@ def get_video(video_id):
 
 @app.route('/api/generate', methods=['POST'])
 def generate_video():
-    """Ручна генерація відео"""
-    data = request.json or {}
+    """Запустити фонову генерацію відео."""
+    data = request.get_json(silent=True) or {}
     niche = data.get('niche')
-    count = data.get('count', 1)
+    count = max(1, min(int(data.get('count', 1)), 1))
 
-    try:
-        results = scheduler.trigger_manual_generation(count=count, niche=niche)
+    with generation_jobs_lock:
+        active_job = next((
+            existing_id for existing_id, job in generation_jobs.items()
+            if job['status'] in ('queued', 'running')
+        ), None)
 
-        return jsonify({
-            'success': True,
-            'videos': [{
-                'video_id': r['video_id'],
-                'title': r['title'],
-                'url': r.get('youtube_url')
-            } for r in results if 'error' not in r]
-        })
+        if active_job:
+            return jsonify({
+                'success': False,
+                'error': 'Інше відео вже генерується',
+                'job_id': active_job
+            }), 409
 
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        job_id = uuid.uuid4().hex[:12]
+        generation_jobs[job_id] = {
+            'job_id': job_id,
+            'status': 'queued',
+            'created_at': datetime.utcnow().isoformat(),
+            'videos': []
+        }
+
+    Thread(
+        target=_run_generation_job,
+        args=(job_id, count, niche),
+        daemon=True
+    ).start()
+
+    return jsonify({
+        'success': True,
+        'job_id': job_id,
+        'status': 'queued'
+    }), 202
+
+
+@app.route('/api/generate/<job_id>')
+def generation_status(job_id):
+    """Стан фонової генерації."""
+    with generation_jobs_lock:
+        job = generation_jobs.get(job_id)
+        if not job:
+            return jsonify({
+                'success': False,
+                'error': 'Завдання не знайдено; можливо, сервіс перезапустився'
+            }), 404
+        return jsonify({'success': True, **job})
 
 
 @app.route('/api/schedule')

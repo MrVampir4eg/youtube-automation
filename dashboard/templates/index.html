@@ -438,14 +438,15 @@
                     body: JSON.stringify({niche: niche || null, count: 1})
                 });
 
-                const data = await response.json();
-
-                if (data.success) {
-                    alert(`✓ Відео створено!\nID: ${data.videos[0].video_id}`);
-                    refreshDashboard();
-                } else {
-                    alert(`✗ Помилка: ${data.error}`);
+                const data = await readJsonResponse(response);
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
                 }
+
+                const result = await waitForGeneration(data.job_id, btn);
+                const video = result.videos[0];
+                alert(`✓ Відео створено!\nID: ${video.video_id}`);
+                refreshDashboard();
 
             } catch (error) {
                 alert(`✗ Помилка: ${error.message}`);
@@ -453,6 +454,43 @@
                 btn.disabled = false;
                 btn.textContent = 'Згенерувати відео';
             }
+        }
+
+        async function readJsonResponse(response) {
+            const body = await response.text();
+            if (!body) {
+                throw new Error(`Сервер не повернув відповідь (HTTP ${response.status})`);
+            }
+
+            try {
+                return JSON.parse(body);
+            } catch (error) {
+                throw new Error(`Некоректна відповідь сервера (HTTP ${response.status})`);
+            }
+        }
+
+        async function waitForGeneration(jobId, btn) {
+            for (let attempt = 0; attempt < 600; attempt++) {
+                btn.textContent = `Генерується… ${Math.floor(attempt * 3 / 60)} хв`;
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                const response = await fetch(`/api/generate/${jobId}`, {
+                    cache: 'no-store'
+                });
+                const job = await readJsonResponse(response);
+
+                if (!response.ok || !job.success) {
+                    throw new Error(job.error || `HTTP ${response.status}`);
+                }
+                if (job.status === 'completed') {
+                    return job;
+                }
+                if (job.status === 'failed') {
+                    throw new Error(job.error || 'Генерація завершилася з помилкою');
+                }
+            }
+
+            throw new Error('Перевищено 30-хвилинний час очікування');
         }
 
         async function refreshAnalytics() {

@@ -34,10 +34,26 @@ class VideoRenderer:
         self.pexels_api_key = os.getenv('PEXELS_API_KEY')
         self.pixabay_api_key = os.getenv('PIXABAY_API_KEY')
 
-        # Налаштування відео
-        self.width = 1080
-        self.height = 1920
-        self.fps = int(os.getenv('VIDEO_FPS', 30))
+        # Free Render instance має мало RAM, тому за замовчуванням
+        # рендеримо 540x960. Якість можна підняти через env.
+        free_mode = os.getenv('USE_FREE_MODE', 'False').lower() == 'true'
+        low_memory_mode = os.getenv(
+            'LOW_MEMORY_MODE',
+            'True' if free_mode else 'False'
+        ).lower() == 'true'
+        requested_width = int(os.getenv('VIDEO_WIDTH', 540 if free_mode else 1080))
+        requested_height = int(os.getenv('VIDEO_HEIGHT', 960 if free_mode else 1920))
+        requested_fps = int(os.getenv('VIDEO_FPS', 24 if free_mode else 30))
+        requested_threads = int(os.getenv('VIDEO_THREADS', 1 if free_mode else 2))
+
+        self.width = min(requested_width, 540) if low_memory_mode else requested_width
+        self.height = min(requested_height, 960) if low_memory_mode else requested_height
+        self.fps = min(requested_fps, 24) if low_memory_mode else requested_fps
+        self.render_threads = min(requested_threads, 1) if low_memory_mode else requested_threads
+        self.render_preset = os.getenv(
+            'VIDEO_PRESET',
+            'ultrafast' if low_memory_mode else 'medium'
+        )
 
         # Директорії
         self.output_dir = Path('output/videos')
@@ -109,8 +125,8 @@ class VideoRenderer:
                 fps=self.fps,
                 codec='libx264',
                 audio_codec='aac',
-                preset='medium',
-                threads=4,
+                preset=self.render_preset,
+                threads=self.render_threads,
                 logger=None  # Вимкнути moviepy логи
             )
 
@@ -395,25 +411,34 @@ class VideoRenderer:
             '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'
         ]
 
+        font_size = max(28, round(self.width * 60 / 1080))
+        stroke_width = max(2, round(self.width * 3 / 1080))
         font = None
         for font_path in font_paths:
             if font_path and Path(font_path).exists():
-                font = ImageFont.truetype(font_path, 60)
+                font = ImageFont.truetype(font_path, font_size)
                 break
         if font is None:
             font = ImageFont.load_default()
 
         lines = text.split('\n')
-        image = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
+        probe = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(probe)
         line_spacing = 14
         line_boxes = [
-            draw.textbbox((0, 0), line, font=font, stroke_width=3)
+            draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width)
             for line in lines
         ]
         line_heights = [box[3] - box[1] for box in line_boxes]
         total_height = sum(line_heights) + line_spacing * max(0, len(lines) - 1)
-        y = (self.height - total_height) // 2
+        padding = 20
+        image = Image.new(
+            'RGBA',
+            (self.width, total_height + padding * 2),
+            (0, 0, 0, 0)
+        )
+        draw = ImageDraw.Draw(image)
+        y = padding
 
         for line, box, line_height in zip(lines, line_boxes, line_heights):
             line_width = box[2] - box[0]
@@ -423,7 +448,7 @@ class VideoRenderer:
                 line,
                 font=font,
                 fill='white',
-                stroke_width=3,
+                stroke_width=stroke_width,
                 stroke_fill='black'
             )
             y += line_height + line_spacing

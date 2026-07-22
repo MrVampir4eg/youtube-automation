@@ -36,5 +36,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD python -c "import os, requests; requests.get('http://localhost:' + os.getenv('PORT', os.getenv('FLASK_PORT', '5000')) + '/health', timeout=5).raise_for_status()"
 
-# Запуск
-CMD ["python", "-m", "dashboard.app"]
+# Production WSGI server. Один worker не дублює scheduler і береже RAM.
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 1 --threads 4 --timeout 900 dashboard.app:app"]
