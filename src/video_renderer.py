@@ -20,7 +20,8 @@ from moviepy.editor import (
     VideoFileClip, AudioFileClip, ImageClip,
     CompositeVideoClip, concatenate_videoclips
 )
-from moviepy.video.fx import resize, fadein, fadeout
+from moviepy.video.fx.fadein import fadein
+from moviepy.video.fx.fadeout import fadeout
 import time
 
 logger = logging.getLogger(__name__)
