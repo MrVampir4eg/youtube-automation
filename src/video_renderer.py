@@ -9,12 +9,18 @@ import random
 from pathlib import Path
 from typing import Dict, List, Optional
 import requests
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+# MoviePy 1.0.3 використовує стару назву Pillow, яку видалили у Pillow 10.
+if not hasattr(Image, 'ANTIALIAS'):
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
+
 from moviepy.editor import (
-    VideoFileClip, AudioFileClip, ImageClip, TextClip,
+    VideoFileClip, AudioFileClip, ImageClip,
     CompositeVideoClip, concatenate_videoclips
 )
 from moviepy.video.fx import resize, fadein, fadeout
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import time
 
 logger = logging.getLogger(__name__)
@@ -201,6 +207,10 @@ class VideoRenderer:
 
         try:
             response = requests.get(url, headers=headers, params=params, timeout=10)
+            if response.status_code == 401:
+                logger.warning("Pexels API key was rejected; using generated background")
+                self.pexels_api_key = None
+                return None
             response.raise_for_status()
             data = response.json()
 
@@ -231,6 +241,9 @@ class VideoRenderer:
         if cache_path.exists():
             return cache_path
 
+        if not self.pexels_api_key:
+            return self._create_gradient_background()
+
         url = "https://api.pexels.com/v1/search"
         headers = {"Authorization": self.pexels_api_key}
         params = {
@@ -241,6 +254,10 @@ class VideoRenderer:
 
         try:
             response = requests.get(url, headers=headers, params=params, timeout=10)
+            if response.status_code == 401:
+                logger.warning("Pexels API key was rejected; using generated background")
+                self.pexels_api_key = None
+                return self._create_gradient_background()
             response.raise_for_status()
             data = response.json()
 
@@ -351,18 +368,8 @@ class VideoRenderer:
 
             text = '\n'.join(lines)
 
-            # Створюємо text clip
-            txt_clip = TextClip(
-                text,
-                fontsize=60,
-                color='white',
-                font='Arial-Bold',
-                stroke_color='black',
-                stroke_width=3,
-                method='caption',
-                size=(self.width - 100, None),
-                align='center'
-            )
+            # Pillow-капшен не потребує ImageMagick у Docker/Render.
+            txt_clip = self._create_caption_clip(text)
 
             txt_clip = txt_clip.set_position('center')
             txt_clip = txt_clip.set_start(start_time)
@@ -378,6 +385,49 @@ class VideoRenderer:
         final = CompositeVideoClip([video_clip] + text_clips)
 
         return final
+
+    def _create_caption_clip(self, text: str) -> ImageClip:
+        """Створити прозорий caption clip через Pillow."""
+        font_paths = [
+            os.getenv('CAPTION_FONT'),
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'
+        ]
+
+        font = None
+        for font_path in font_paths:
+            if font_path and Path(font_path).exists():
+                font = ImageFont.truetype(font_path, 60)
+                break
+        if font is None:
+            font = ImageFont.load_default()
+
+        lines = text.split('\n')
+        image = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        line_spacing = 14
+        line_boxes = [
+            draw.textbbox((0, 0), line, font=font, stroke_width=3)
+            for line in lines
+        ]
+        line_heights = [box[3] - box[1] for box in line_boxes]
+        total_height = sum(line_heights) + line_spacing * max(0, len(lines) - 1)
+        y = (self.height - total_height) // 2
+
+        for line, box, line_height in zip(lines, line_boxes, line_heights):
+            line_width = box[2] - box[0]
+            x = (self.width - line_width) // 2
+            draw.text(
+                (x, y),
+                line,
+                font=font,
+                fill='white',
+                stroke_width=3,
+                stroke_fill='black'
+            )
+            y += line_height + line_spacing
+
+        return ImageClip(np.array(image), transparent=True)
 
     def add_watermark(self, video_path: Path, channel_name: str) -> Path:
         """Додавання watermark (опційно)"""
