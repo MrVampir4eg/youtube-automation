@@ -26,9 +26,12 @@ class AutomationScheduler:
         self.db = Database()
 
         # Налаштування з .env
-        self.timezone = pytz.timezone(os.getenv('TIMEZONE', 'Europe/Kiev'))
+        self.timezone = pytz.timezone(os.getenv('TIMEZONE', 'Europe/Kyiv'))
         self.videos_per_day = int(os.getenv('VIDEOS_PER_DAY', 3))
         self.generation_time = int(os.getenv('GENERATION_TIME', 3))  # Година дня
+        self.internal_generation_enabled = os.getenv(
+            'ENABLE_INTERNAL_SCHEDULER', 'False'
+        ).lower() == 'true'
 
         self.is_running = False
 
@@ -40,18 +43,23 @@ class AutomationScheduler:
 
         logger.info("Starting automation scheduler...")
 
-        # Щоденна генерація відео
-        self.scheduler.add_job(
-            self.daily_video_generation,
-            trigger=CronTrigger(
-                hour=self.generation_time,
-                minute=0,
-                timezone=self.timezone
-            ),
-            id='daily_generation',
-            name='Daily Video Generation',
-            replace_existing=True
-        )
+        # На Render Free надійніший зовнішній GitHub Actions schedule. Старий
+        # внутрішній batch можна ввімкнути окремо, але за замовчуванням він не
+        # створює дублікати поверх чотирьох market-слотів.
+        if self.internal_generation_enabled and self.videos_per_day > 0:
+            self.scheduler.add_job(
+                self.daily_video_generation,
+                trigger=CronTrigger(
+                    hour=self.generation_time,
+                    minute=0,
+                    timezone=self.timezone
+                ),
+                id='daily_generation',
+                name='Daily Video Generation',
+                replace_existing=True
+            )
+        else:
+            logger.info('Internal generation disabled; using external schedule')
 
         # Оновлення аналітики кожні 6 годин
         self.scheduler.add_job(

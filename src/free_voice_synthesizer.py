@@ -32,8 +32,8 @@ class FreeVoiceSynthesizer:
         }
 
         self.provider = os.getenv('FREE_TTS_PROVIDER', 'edge').lower()
-        self.edge_rate = os.getenv('EDGE_TTS_RATE', '+8%')
-        self.edge_pitch = os.getenv('EDGE_TTS_PITCH', '+0Hz')
+        self.edge_rate = os.getenv('EDGE_TTS_RATE', '').strip()
+        self.edge_pitch = os.getenv('EDGE_TTS_PITCH', '').strip()
         self.edge_voice = os.getenv('EDGE_TTS_VOICE', '').strip()
 
         selected = 'Edge Neural TTS' if self.provider == 'edge' else 'gTTS'
@@ -90,7 +90,9 @@ class FreeVoiceSynthesizer:
             return self.edge_voice
 
         if language == 'uk':
-            if niche in {'everyday_humor', 'tech', 'productivity'}:
+            if niche in {
+                'everyday_humor', 'internet_culture', 'tech', 'productivity'
+            }:
                 return 'uk-UA-OstapNeural'
             return 'uk-UA-PolinaNeural'
         if language == 'en':
@@ -98,6 +100,22 @@ class FreeVoiceSynthesizer:
         if language == 'ru':
             return 'ru-RU-SvetlanaNeural'
         return 'uk-UA-PolinaNeural'
+
+    def _select_edge_settings(self, niche: str) -> tuple:
+        """Natural niche-aware pace unless Render explicitly overrides it."""
+        default_rates = {
+            'everyday_humor': '+12%',
+            'internet_culture': '+11%',
+            'fun_facts': '+9%',
+            'tech': '+8%',
+            'productivity': '+7%',
+            'mini_stories': '+5%',
+            'history': '+3%',
+            'psychology': '+2%'
+        }
+        rate = self.edge_rate or default_rates.get(niche, '+5%')
+        pitch = self.edge_pitch or '+0Hz'
+        return rate, pitch
 
     def _synthesize_edge(self,
                          text: str,
@@ -108,14 +126,15 @@ class FreeVoiceSynthesizer:
         start_time = time.time()
         audio_path = self.output_dir / f"{video_id}.mp3"
         voice = self._select_edge_voice(niche, language)
+        rate, pitch = self._select_edge_settings(niche)
 
         async def stream_audio():
             word_timings = []
             communicator = edge_tts.Communicate(
                 text,
                 voice,
-                rate=self.edge_rate,
-                pitch=self.edge_pitch,
+                rate=rate,
+                pitch=pitch,
                 boundary='WordBoundary'
             )
 
@@ -149,7 +168,7 @@ class FreeVoiceSynthesizer:
 
         logger.info(
             f"✓ Neural audio generated: {audio_path.name}, "
-            f"~{duration:.1f}s, voice={voice}, COST: $0"
+            f"~{duration:.1f}s, voice={voice}, rate={rate}, COST: $0"
         )
 
         return {

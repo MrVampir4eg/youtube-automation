@@ -4,6 +4,8 @@
       "id": "motivation",
       "name": "Мотивація та Mindset",
       "description": "Мотиваційний контент, історії успіху, mindset",
+      "market_weight": 0.75,
+      "monetization_safe": true,
       "target_cpm": 3.5,
       "voice": "Adam",
       "keywords": [
@@ -49,6 +51,8 @@
       "id": "finance",
       "name": "Фінанси та Інвестиції",
       "description": "Фінансові поради, крипто, інвестиції",
+      "market_weight": 0.2,
+      "monetization_safe": false,
       "target_cpm": 5.0,
       "voice": "Antoni",
       "keywords": [
@@ -94,6 +98,8 @@
       "id": "history",
       "name": "Історія та Таємниці",
       "description": "Історичні факти, загадки, нерозкриті таємниці",
+      "market_weight": 1.05,
+      "monetization_safe": true,
       "target_cpm": 2.5,
       "voice": "Bella",
       "keywords": [
@@ -139,6 +145,8 @@
       "id": "tech",
       "name": "Tech та AI",
       "description": "Технологічні новини, AI, гаджети",
+      "market_weight": 1.15,
+      "monetization_safe": true,
       "target_cpm": 4.5,
       "voice": "Josh",
       "keywords": [
@@ -184,6 +192,8 @@
       "id": "productivity",
       "name": "Продуктивність та Лайфхаки",
       "description": "Поради по продуктивності, life hacks, time management",
+      "market_weight": 0.9,
+      "monetization_safe": true,
       "target_cpm": 3.0,
       "voice": "Adam",
       "keywords": [
@@ -229,6 +239,13 @@
       "id": "fun_facts",
       "name": "Дивні та смішні факти",
       "description": "Неочікувані правдиві факти з легким гумором і сильним фіналом",
+      "market_weight": 1.4,
+      "monetization_safe": true,
+      "trend_seeds": [
+        "дивні звички тварин",
+        "неочікувана наука навколо нас",
+        "походження звичних речей"
+      ],
       "target_cpm": 2.8,
       "voice": "Polina",
       "keywords": [
@@ -274,6 +291,13 @@
       "id": "everyday_humor",
       "name": "Життєві приколи та ситуації",
       "description": "Впізнавані побутові ситуації, короткі жарти та самоіронія без образ",
+      "market_weight": 1.4,
+      "monetization_safe": true,
+      "trend_seeds": [
+        "ранкові фейли",
+        "дивні переписки",
+        "очікування проти реальності"
+      ],
       "target_cpm": 2.2,
       "voice": "Ostap",
       "keywords": [
@@ -319,6 +343,8 @@
       "id": "psychology",
       "name": "Психологія та стосунки",
       "description": "Побутова психологія, спілкування та впізнавані соціальні ситуації",
+      "market_weight": 1.2,
+      "monetization_safe": true,
       "target_cpm": 3.4,
       "voice": "Polina",
       "keywords": [
@@ -359,12 +385,113 @@
           "cta": "Розберемо наступний міф завтра"
         }
       ]
+    },
+    {
+      "id": "internet_culture",
+      "name": "Меми та інтернет-культура",
+      "description": "Оригінальні жарти про тренди, меми й поведінку людей в інтернеті",
+      "market_weight": 1.35,
+      "monetization_safe": true,
+      "target_cpm": 2.4,
+      "voice": "Ostap",
+      "keywords": [
+        "memes",
+        "internet culture",
+        "trends",
+        "social media",
+        "relatable",
+        "ukrainian humor",
+        "shorts"
+      ],
+      "trend_seeds": [
+        "чому меми повторюються",
+        "типи людей у коментарях",
+        "дивні правила групових чатів"
+      ],
+      "video_themes": [
+        "person scrolling phone reaction",
+        "friends laughing at smartphone",
+        "funny text message reaction",
+        "social media comments close up",
+        "confused person with phone",
+        "internet meme reaction"
+      ],
+      "content_templates": [
+        {
+          "type": "comment_section_truth",
+          "hook_template": "У коментарях завжди є ця людина",
+          "body_structure": "знайомий типаж → ескалація → добрий панчлайн",
+          "cta": "Хто це у твоїх коментарях?"
+        },
+        {
+          "type": "meme_explained",
+          "hook_template": "Чому цей мем неможливо забути",
+          "body_structure": "дивний шаблон → впізнавання → оригінальний висновок",
+          "cta": "Який мем розібрати далі?"
+        },
+        {
+          "type": "online_expectation_reality",
+          "hook_template": "В інтернеті це виглядало простіше",
+          "body_structure": "ідеальна версія → реальна спроба → самоіронія",
+          "cta": "У тебе теж так було?"
+        }
+      ]
+    },
+    {
+      "id": "mini_stories",
+      "name": "Короткі історії з поворотом",
+      "description": "Оригінальні побутові мініісторії з ескалацією, людяністю і панчлайном",
+      "market_weight": 1.45,
+      "monetization_safe": true,
+      "target_cpm": 2.7,
+      "voice": "Polina",
+      "keywords": [
+        "storytime",
+        "plot twist",
+        "funny story",
+        "relatable",
+        "mini story",
+        "ukrainian shorts"
+      ],
+      "trend_seeds": [
+        "незручна ситуація в магазині",
+        "загублена річ знайшлася дивно",
+        "неочікуваний фінал звичайного дня"
+      ],
+      "video_themes": [
+        "person searching apartment",
+        "awkward supermarket moment",
+        "surprised phone call reaction",
+        "friends telling funny story",
+        "unexpected discovery at home",
+        "person laughing embarrassed"
+      ],
+      "content_templates": [
+        {
+          "type": "tiny_story_twist",
+          "hook_template": "День став дивним через одну дрібницю",
+          "body_structure": "конкретний сетап → дві ескалації → теплий або смішний поворот",
+          "cta": "Розповісти ще одну?"
+        },
+        {
+          "type": "misunderstanding",
+          "hook_template": "Він зрозумів усе зовсім неправильно",
+          "body_structure": "непорозуміння → наслідок → розкриття → панчлайн",
+          "cta": "Було щось подібне?"
+        },
+        {
+          "type": "ordinary_mystery",
+          "hook_template": "Ця річ зникала щодня",
+          "body_structure": "маленька загадка → підозри → неочікуване побутове пояснення",
+          "cta": "Фінал був очевидний?"
+        }
+      ]
     }
   ],
 
   "global_settings": {
-    "min_duration_seconds": 25,
-    "max_duration_seconds": 38,
+    "min_duration_seconds": 18,
+    "max_duration_seconds": 35,
     "target_hook_seconds": 1,
     "target_cta_seconds": 3,
     "words_per_second": 2.5,

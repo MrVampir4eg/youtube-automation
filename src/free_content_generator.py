@@ -1,494 +1,640 @@
-"""
-FREE Content Generator - використовує БЕЗКОШТОВНІ AI API
-Groq API (llama-3.1-70b) - швидкий і якісний, повністю безкоштовно!
-"""
+"""Market-aware free content generator for Ukrainian vertical videos."""
 
-import os
 import json
-import random
 import logging
+import os
+import random
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
-from datetime import datetime
+
 import requests
+
+from src.trend_scout import TrendScout
+
 
 logger = logging.getLogger(__name__)
 
 
 class FreeContentGenerator:
-    """Генератор контенту через БЕЗКОШТОВНІ API"""
+    """Generate original Shorts/Reels scripts with local quality control."""
 
     def __init__(self):
-        # Groq API - БЕЗКОШТОВНО! https://groq.com/
-        self.groq_api_key = os.getenv('GROQ_API_KEY', '')
-        self.groq_model = 'llama-3.3-70b-versatile'
+        self.groq_api_key = os.getenv("GROQ_API_KEY", "")
+        self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.together_api_key = os.getenv("TOGETHER_API_KEY", "")
 
-        # Together AI - БЕЗКОШТОВНО! https://together.ai/
-        self.together_api_key = os.getenv('TOGETHER_API_KEY', '')
-
-        # Вибираємо провайдера
         if self.groq_api_key:
-            self.provider = 'groq'
+            self.provider = "groq"
             logger.info("✓ Using Groq API (FREE)")
         elif self.together_api_key:
-            self.provider = 'together'
-            logger.info("✓ Using Together AI (FREE)")
+            self.provider = "together"
+            logger.info("✓ Using Together AI")
         else:
-            logger.warning("⚠ No API keys found - using fallback templates")
-            self.provider = 'fallback'
+            self.provider = "fallback"
+            logger.warning("⚠ No AI API key found; using original fallback stories")
 
-        # Завантаження конфігурації ніш
-        config_path = Path(__file__).resolve().parents[1] / 'config' / 'niches.json'
+        config_path = Path(__file__).resolve().parents[1] / "config" / "niches.json"
         if config_path.exists():
-            with config_path.open('r', encoding='utf-8') as f:
-                self.config = json.load(f)
+            with config_path.open("r", encoding="utf-8") as file:
+                self.config = json.load(file)
         else:
-            logger.warning(f"Config not found: {config_path}, using defaults")
+            logger.warning("Config not found: %s, using defaults", config_path)
             self.config = self._get_default_config()
 
-        self.niches = {n['id']: n for n in self.config['niches']}
-        self.global_settings = self.config['global_settings']
-
-        configured_niches = [
-            niche_id.strip()
-            for niche_id in os.getenv('CONTENT_NICHES', '').split(',')
-            if niche_id.strip()
+        self.niches = {item["id"]: item for item in self.config["niches"]}
+        self.global_settings = self.config["global_settings"]
+        configured = [
+            value.strip()
+            for value in os.getenv("CONTENT_NICHES", "").split(",")
+            if value.strip()
         ]
-        self.enabled_niche_ids = [
-            niche_id for niche_id in configured_niches
-            if niche_id in self.niches
-        ] or list(self.niches.keys())
+        safe_defaults = [
+            niche_id
+            for niche_id, niche in self.niches.items()
+            if niche.get("monetization_safe", True)
+        ]
+        configured_safe = [
+            niche_id for niche_id in configured if niche_id in self.niches
+        ]
+        if configured_safe and os.getenv("AUTO_EXPAND_NICHES", "True").lower() == "true":
+            for niche_id in ("mini_stories", "internet_culture"):
+                if niche_id in self.niches and niche_id not in configured_safe:
+                    configured_safe.append(niche_id)
+        self.enabled_niche_ids = configured_safe or safe_defaults or list(self.niches)
 
-    def _get_default_config(self):
-        """Дефолтна конфігурація якщо файл не знайдено"""
+        self.target_audience = os.getenv(
+            "TARGET_AUDIENCE",
+            "україномовні глядачі 18–34 років, які люблять короткий edutainment",
+        )
+        self.max_attempts = max(1, min(3, int(os.getenv("SCRIPT_MAX_ATTEMPTS", "2"))))
+        self.min_quality_score = max(
+            50, min(95, int(os.getenv("MIN_SCRIPT_QUALITY_SCORE", "78")))
+        )
+        self.trend_scout = TrendScout()
+        self.history_path = Path("database/content_history.json")
+        self.history_limit = max(20, int(os.getenv("CONTENT_HISTORY_LIMIT", "80")))
+        self.history = self._load_history()
+
+    @staticmethod
+    def _get_default_config() -> Dict:
         return {
-            'niches': [
+            "niches": [
                 {
-                    'id': 'motivation',
-                    'name': 'Мотивація',
-                    'keywords': ['motivation', 'success', 'mindset']
+                    "id": "fun_facts",
+                    "name": "Дивні та смішні факти",
+                    "keywords": ["facts", "curiosity", "science"],
+                    "video_themes": ["surprising discovery"],
                 }
             ],
-            'global_settings': {
-                'min_duration_seconds': 45,
-                'max_duration_seconds': 55,
-                'words_per_second': 2.5
-            }
+            "global_settings": {
+                "min_duration_seconds": 18,
+                "max_duration_seconds": 35,
+                "words_per_second": 2.5,
+            },
         }
 
     def generate_script(self, niche_id: Optional[str] = None) -> Dict:
-        """Генерація скрипту"""
-        logger.info(f"Generating script for niche: {niche_id or 'random'}")
+        niche = self._select_niche(niche_id)
+        market_signals = self.trend_scout.get_signals(niche)
+        avoid_hooks = [item.get("hook", "") for item in self.history[-10:]]
+        logger.info(
+            "Generating %s script with %s market signals",
+            niche["id"],
+            len(market_signals),
+        )
 
-        # Вибір ніші
+        candidates = []
+        attempts = 1 if self.provider == "fallback" else self.max_attempts
+        for attempt in range(attempts):
+            if self.provider == "groq":
+                candidate = self._generate_groq(niche, market_signals, avoid_hooks)
+            elif self.provider == "together":
+                candidate = self._generate_together(niche, market_signals, avoid_hooks)
+            else:
+                candidate = self._generate_fallback(niche)
+
+            candidate["quality_score"] = self._score_script(candidate)
+            candidate["metadata"]["quality_score"] = candidate["quality_score"]
+            candidate["metadata"]["attempt"] = attempt + 1
+            candidates.append(candidate)
+
+            if candidate["quality_score"] >= self.min_quality_score:
+                break
+            avoid_hooks.append(candidate.get("hook", ""))
+            logger.info(
+                "Draft scored %s/%s; generating a stronger version",
+                candidate["quality_score"],
+                self.min_quality_score,
+            )
+
+        best = max(candidates, key=lambda item: item["quality_score"])
+        self._remember(best)
+        return best
+
+    def _select_niche(self, niche_id: Optional[str]) -> Dict:
         if niche_id and niche_id in self.niches:
-            niche = self.niches[niche_id]
-        else:
-            niche = self.niches[random.choice(self.enabled_niche_ids)]
+            return self.niches[niche_id]
 
-        # Генерація через обраний провайдер
-        if self.provider == 'groq':
-            script_data = self._generate_groq(niche)
-        elif self.provider == 'together':
-            script_data = self._generate_together(niche)
-        else:
-            script_data = self._generate_fallback(niche)
+        choices = [self.niches[item] for item in self.enabled_niche_ids]
+        weights = [max(0.1, float(item.get("market_weight", 1.0))) for item in choices]
+        return random.choices(choices, weights=weights, k=1)[0]
 
-        return script_data
-
-    def _generate_groq(self, niche: Dict) -> Dict:
-        """Генерація через Groq API (БЕЗКОШТОВНО!)"""
-
-        prompt = self._build_prompt(niche)
-
+    def _generate_groq(
+        self,
+        niche: Dict,
+        market_signals: List[str],
+        avoid_hooks: List[str],
+    ) -> Dict:
+        prompt = self._build_prompt(niche, market_signals, avoid_hooks)
         try:
             response = requests.post(
-                'https://api.groq.com/openai/v1/chat/completions',
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers={
-                    'Authorization': f'Bearer {self.groq_api_key}',
-                    'Content-Type': 'application/json'
+                    "Authorization": f"Bearer {self.groq_api_key}",
+                    "Content-Type": "application/json",
                 },
                 json={
-                    'model': self.groq_model,
-                    'messages': [
+                    "model": self.groq_model,
+                    "messages": [
                         {
-                            'role': 'system',
-                            'content': 'Ти експерт-копірайтер для вірусного YouTube Shorts контенту.'
+                            "role": "system",
+                            "content": (
+                                "Ти український автор коротких відео. Пиши як жива "
+                                "людина: конкретно, дотепно, без AI-кліше. Не вигадуй "
+                                "факти й не копіюй чужі формулювання."
+                            ),
                         },
-                        {
-                            'role': 'user',
-                            'content': prompt
-                        }
+                        {"role": "user", "content": prompt},
                     ],
-                    'temperature': 0.9,
-                    'max_tokens': 500
+                    "temperature": 0.88,
+                    "max_tokens": 900,
                 },
-                timeout=30
+                timeout=35,
             )
-
             response.raise_for_status()
-            data = response.json()
-
-            content = data['choices'][0]['message']['content']
-
-            # Парсинг відповіді
-            parsed = self._parse_script(content)
-
-            return {
-                'niche': niche['id'],
-                'niche_name': niche['name'],
-                'hook': parsed['hook'],
-                'body': parsed['body'],
-                'payoff': parsed['payoff'],
-                'cta': parsed['cta'],
-                'full_script': parsed['full_script'],
-                'estimated_duration': self._estimate_duration(parsed['full_script']),
-                'voice': niche.get('voice', 'uk'),
-                'keywords': niche.get('keywords', []),
-                'video_themes': niche.get('video_themes', ['generic']),
-                'visual_queries': parsed['visual_queries'] or niche.get(
-                    'video_themes', ['generic']
-                ),
-                'metadata': {
-                    'generated_at': datetime.utcnow().isoformat(),
-                    'provider': 'groq',
-                    'model': self.groq_model,
-                    'cost': 0.0  # БЕЗКОШТОВНО!
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"Groq API error: {e}")
-            # Fallback
+            content = response.json()["choices"][0]["message"]["content"]
+            return self._build_result(
+                niche,
+                self._parse_script(content),
+                provider="groq",
+                model=self.groq_model,
+                market_signals=market_signals,
+            )
+        except Exception as exc:
+            logger.error("Groq API error: %s", exc)
             return self._generate_fallback(niche)
 
-    def _generate_together(self, niche: Dict) -> Dict:
-        """Генерація через Together AI (БЕЗКОШТОВНО!)"""
-
-        prompt = self._build_prompt(niche)
-
+    def _generate_together(
+        self,
+        niche: Dict,
+        market_signals: List[str],
+        avoid_hooks: List[str],
+    ) -> Dict:
+        model = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+        prompt = self._build_prompt(niche, market_signals, avoid_hooks)
         try:
             response = requests.post(
-                'https://api.together.xyz/v1/chat/completions',
+                "https://api.together.xyz/v1/chat/completions",
                 headers={
-                    'Authorization': f'Bearer {self.together_api_key}',
-                    'Content-Type': 'application/json'
+                    "Authorization": f"Bearer {self.together_api_key}",
+                    "Content-Type": "application/json",
                 },
                 json={
-                    'model': 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
-                    'messages': [
+                    "model": model,
+                    "messages": [
                         {
-                            'role': 'system',
-                            'content': 'Ти експерт-копірайтер для вірусного YouTube Shorts контенту.'
+                            "role": "system",
+                            "content": (
+                                "Ти український автор коротких вертикальних відео. "
+                                "Створюй оригінальні мініісторії без вигаданих фактів."
+                            ),
                         },
-                        {
-                            'role': 'user',
-                            'content': prompt
-                        }
+                        {"role": "user", "content": prompt},
                     ],
-                    'temperature': 0.9,
-                    'max_tokens': 500
+                    "temperature": 0.88,
+                    "max_tokens": 900,
                 },
-                timeout=30
+                timeout=35,
             )
-
             response.raise_for_status()
-            data = response.json()
-
-            content = data['choices'][0]['message']['content']
-            parsed = self._parse_script(content)
-
-            return {
-                'niche': niche['id'],
-                'niche_name': niche['name'],
-                'hook': parsed['hook'],
-                'body': parsed['body'],
-                'payoff': parsed['payoff'],
-                'cta': parsed['cta'],
-                'full_script': parsed['full_script'],
-                'estimated_duration': self._estimate_duration(parsed['full_script']),
-                'voice': niche.get('voice', 'uk'),
-                'keywords': niche.get('keywords', []),
-                'video_themes': niche.get('video_themes', ['generic']),
-                'visual_queries': parsed['visual_queries'] or niche.get(
-                    'video_themes', ['generic']
-                ),
-                'metadata': {
-                    'generated_at': datetime.utcnow().isoformat(),
-                    'provider': 'together',
-                    'model': 'llama-3.1-70b',
-                    'cost': 0.0
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"Together AI error: {e}")
+            content = response.json()["choices"][0]["message"]["content"]
+            return self._build_result(
+                niche,
+                self._parse_script(content),
+                provider="together",
+                model=model,
+                market_signals=market_signals,
+            )
+        except Exception as exc:
+            logger.error("Together AI error: %s", exc)
             return self._generate_fallback(niche)
+
+    def _build_result(
+        self,
+        niche: Dict,
+        parsed: Dict,
+        provider: str,
+        model: str,
+        market_signals: Optional[List[str]] = None,
+    ) -> Dict:
+        visuals = parsed["visual_queries"] or niche.get("video_themes", ["discovery"])
+        return {
+            "niche": niche["id"],
+            "niche_name": niche["name"],
+            "topic": parsed.get("topic") or niche["name"],
+            "angle": parsed.get("angle", ""),
+            "hook_candidates": parsed.get("hook_candidates", []),
+            "hook": parsed["hook"],
+            "body": parsed["body"],
+            "payoff": parsed["payoff"],
+            "loop": parsed.get("loop", ""),
+            "cta": parsed["cta"],
+            "full_script": parsed["full_script"],
+            "estimated_duration": self._estimate_duration(parsed["full_script"]),
+            "voice": niche.get("voice", "uk"),
+            "keywords": niche.get("keywords", []),
+            "video_themes": niche.get("video_themes", ["discovery"]),
+            "visual_queries": visuals[:10],
+            "on_screen_text": parsed.get("on_screen_text", [])[:4],
+            "sound_mood": parsed.get("sound_mood", "curious upbeat"),
+            "metadata": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "provider": provider,
+                "model": model,
+                "market_signals": (market_signals or [])[:6],
+                "cost": 0.0,
+            },
+        }
 
     def _generate_fallback(self, niche: Dict) -> Dict:
-        """Fallback генерація без AI - використовує темплейти"""
-
         templates = {
-            'motivation': [
-                {
-                    'hook': 'Ця людина змінила своє життя за 90 днів. Як?',
-                    'body': 'Він встав о 5 ранку кожен день. Тренувався годину. Читав 30 хвилин. І найголовніше - не здавався навіть коли було важко. Результат? Повна трансформація тіла і розуму.',
-                    'cta': 'Підпишись щоб дізнатись більше історій успіху!'
-                },
-                {
-                    'hook': '3 звички мільярдерів про які ніхто не говорить',
-                    'body': 'Перша - вони читають мінімум годину щодня. Друга - медитують кожен ранок. Третя - завжди інвестують в себе. Це не секрет, це дисципліна.',
-                    'cta': 'Збережи щоб не забути ці звички!'
-                }
-            ],
-            'finance': [
-                {
-                    'hook': '99% людей НЕ знають цей факт про гроші',
-                    'body': 'Гроші - це не мета, це інструмент. Багаті люди заробляють гроші не заради грошей, а заради свободи. Свободи вибору. Свободи часу. Свободи життя.',
-                    'cta': 'Підпишись для фінансових інсайтів!'
-                }
-            ],
-            'fun_facts': [
-                {
-                    'hook': 'Восьминіг має три серця.',
-                    'body': 'Два з них качають кров до зябер, а третє — до решти тіла. Найдивніше: коли восьминіг пливе, головне серце тимчасово перестає працювати.',
-                    'payoff': 'Тому він частіше повзає — так банально легше жити.',
-                    'cta': 'Завтра буде ще дивніше.'
-                }
-            ],
-            'everyday_humor': [
-                {
-                    'hook': 'Будильник о сьомій — це переговори.',
-                    'body': 'Перша кнопка «відкласти» означає: я почув вашу пропозицію. Друга: потрібен час подумати. Третя: наша співпраця сьогодні неможлива.',
-                    'payoff': 'А потім ти прокидаєшся керівником відділу запізнень.',
-                    'cta': 'Надішли це своєму сонному другу.'
-                }
-            ],
-            'psychology': [
-                {
-                    'hook': 'Пауза робить відповідь сильнішою.',
-                    'body': 'Коли тебе провокують, не відповідай миттєво. Дві спокійні секунди зменшують емоцію і дають обрати слова, про які не доведеться шкодувати.',
-                    'payoff': 'Контроль — це не мовчання, а правильний момент.',
-                    'cta': 'Збережи перед складною розмовою.'
-                }
-            ]
+            "fun_facts": {
+                "topic": "Чому восьминіг воліє ходити",
+                "hook": "У восьминога серце зупиняється під час плавання.",
+                "body": (
+                    "Точніше, головне з трьох сердець перестає качати кров, коли він "
+                    "активно пливе. Саме тому повзати дном для нього енергетично вигідніше."
+                ),
+                "payoff": "Тобто він не ледачий — він економний.",
+                "loop": "І так, сердець у нього справді три.",
+                "cta": "Ще дивніший факт — завтра",
+            },
+            "everyday_humor": {
+                "topic": "Ранковий будильник",
+                "hook": "Будильник зранку — це ділові переговори.",
+                "body": (
+                    "Перше «відкласти» означає: пропозицію отримано. Друге: потрібен "
+                    "час на рішення. Третє: сьогодні наша співпраця неможлива."
+                ),
+                "payoff": "А потім ти очолюєш відділ запізнень.",
+                "loop": "І завтра переговори почнуться знову.",
+                "cta": "Надішли сонному другу",
+            },
+            "psychology": {
+                "topic": "Сильна пауза у розмові",
+                "hook": "Дві секунди можуть врятувати складну розмову.",
+                "body": (
+                    "Коли тебе провокують, мозок готує найшвидшу, а не найкращу "
+                    "відповідь. Коротка пауза повертає вибір слів і знижує напругу."
+                ),
+                "payoff": "Контроль — це не мовчання, а правильний момент.",
+                "loop": "Іноді відповідь починається саме з паузи.",
+                "cta": "Збережи перед розмовою",
+            },
+            "internet_culture": {
+                "topic": "Чому мем стає смішнішим",
+                "hook": "Мем стає смішнішим після третього повтору.",
+                "body": (
+                    "Спочатку ти бачиш жарт. Потім упізнаєш шаблон. А далі вже "
+                    "смієшся з того, наскільки безглуздо він знову з'явився."
+                ),
+                "payoff": "Інтернет називає це культурою. Мама — марнуванням часу.",
+                "loop": "Тому цей мем ти ще точно побачиш.",
+                "cta": "Який мем не відпускає?",
+            },
+            "mini_stories": {
+                "topic": "Телефон у холодильнику",
+                "hook": "Він знайшов телефон у холодильнику.",
+                "body": (
+                    "П'ять хвилин шукав його з ліхтариком іншого телефона. Уже "
+                    "збирався дзвонити оператору, коли захотів води й відкрив дверцята."
+                ),
+                "payoff": "Телефон охолов. Самооцінка — ні.",
+                "loop": "А все почалося з пошуку телефона.",
+                "cta": "Було щось подібне?",
+            },
         }
-
-        niche_id = niche['id']
-        available = templates.get(niche_id, templates['motivation'])
-        template = random.choice(available)
-
-        payoff = template.get('payoff', '')
-        full_script = ' '.join(
-            part for part in (
-                template['hook'], template['body'], payoff, template['cta']
-            ) if part
+        template = templates.get(niche["id"], templates["fun_facts"])
+        parsed = {
+            **template,
+            "angle": "коротка людська мініісторія",
+            "hook_candidates": [template["hook"]],
+            "visual_queries": niche.get("video_themes", ["surprised person"]),
+            "on_screen_text": ["СТОП", "ОСЬ ЩО ДИВНО", "ФІНАЛ"],
+            "sound_mood": "curious playful",
+        }
+        parsed["full_script"] = " ".join(
+            parsed[key] for key in ("hook", "body", "payoff", "loop") if parsed.get(key)
+        )
+        return self._build_result(
+            niche,
+            parsed,
+            provider="fallback",
+            model="original-template",
         )
 
-        return {
-            'niche': niche_id,
-            'niche_name': niche['name'],
-            'hook': template['hook'],
-            'body': template['body'],
-            'payoff': payoff,
-            'cta': template['cta'],
-            'full_script': full_script,
-            'estimated_duration': self._estimate_duration(full_script),
-            'voice': niche.get('voice', 'uk'),
-            'keywords': niche.get('keywords', []),
-            'video_themes': niche.get('video_themes', ['generic']),
-            'visual_queries': niche.get('video_themes', ['generic']),
-            'metadata': {
-                'generated_at': datetime.utcnow().isoformat(),
-                'provider': 'fallback',
-                'model': 'template',
-                'cost': 0.0
-            }
-        }
+    def _build_prompt(
+        self,
+        niche: Dict,
+        market_signals: List[str],
+        avoid_hooks: List[str],
+    ) -> str:
+        templates = niche.get("content_templates", [])
+        template = random.choice(templates) if templates else {}
+        format_name = template.get("type", "curiosity_story")
+        structure = template.get(
+            "body_structure", "setup → escalation → twist → satisfying payoff"
+        )
+        market_text = "; ".join(market_signals) or "немає — використай evergreen тему"
+        avoid_text = " | ".join(item for item in avoid_hooks if item) or "немає"
 
-    def _build_prompt(self, niche: Dict) -> str:
-        """Побудова промпту"""
-        templates = niche.get('content_templates', [])
-        template_hint = random.choice(templates) if templates else {}
+        return f"""Створи ОДИН оригінальний український сценарій для вертикального відео.
 
-        return f"""Створи оригінальний сценарій для українського YouTube Shorts на тему "{niche['name']}".
+КАНАЛ:
+- Ніша: {niche['name']}
+- Аудиторія: {self.target_audience}
+- Формат: {format_name}
+- Дуга: {structure}
+- Безпечні ринкові сигнали: {market_text}
+- Не повторюй попередні хуки: {avoid_text}
 
-ВИМОГИ:
-- Тривалість: 25-38 секунд (70-95 слів)
-- Мова: Українська
-- Стиль: edutainment — динамічно, зрозуміло, з легкою іронією або неочікуваним поворотом
-- Не вигадуй факти, статистику, цитати або особистий досвід
-- Без привітання, вступу, канцеляризмів та порожніх фраз
-- Не повторюй банальні формулювання на кшталт "про це ніхто не говорить"
-- Орієнтир формату: {template_hint.get('type', 'коротка цікава історія')}
+РИНКОВА ФОРМУЛА:
+1. Перша секунда зупиняє свайп: 4–7 простих слів, конкретний конфлікт або дивина.
+2. До третьої секунди відкрий інформаційну петлю — глядач має захотіти відповідь.
+3. Кожні 1–2 речення додавай нову деталь, контраст або зміну очікування.
+4. Дай чесну розв'язку/панчлайн до фіналу. Остання фраза природно повертає до HOOK.
+5. CTA не озвучується: це лише короткий текст на екрані.
 
-СТРУКТУРА:
+ЖОРСТКІ ВИМОГИ:
+- 18–35 секунд, 50–82 слова озвучки
+- жива розмовна українська; короткі речення; одна доречна іронічна деталь
+- без привітань, води, моралізаторства, «шок», «ти не повіриш», «99% людей»
+- не вигадуй статистику, цитати, дослідження, новини чи особистий досвід
+- не давай медичних, юридичних, політичних або фінансових порад
+- тренд можна використати лише як безпечний кут, не як джерело фактів
+- не копіюй мем, відео або чужий сценарій; створи власну мініісторію
+- візуали мають буквально відповідати послідовним сценам, а не бути абстрактними
 
-HOOK (перша секунда, максимум 8 слів):
-Конкретний шок, конфлікт, запитання або дивний факт. Одразу обіцяє результат.
+ФОРМАТ ВІДПОВІДІ — назви секцій не змінюй:
 
-BODY (основна частина):
-3-5 коротких фраз. Кожна просуває історію вперед. Додай одну зміну очікування.
+TOPIC:
+[конкретна тема, до 8 слів]
 
-PAYOFF:
-Чітка відповідь, висновок або панчлайн, який виконує обіцянку HOOK.
+ANGLE:
+[чому саме цей варіант цікавий]
 
-CTA (максимум 7 слів):
-Конкретна причина підписатися або дочекатися наступної частини. Без благання.
+HOOK_A:
+[варіант 1]
 
-VISUALS:
-6 коротких англомовних пошукових фраз для стокових вертикальних відео. Конкретні об'єкти й дії, через кому.
+HOOK_B:
+[варіант 2]
 
-ФОРМАТ ВІДПОВІДІ:
+HOOK_C:
+[варіант 3]
 
 HOOK:
-[текст]
+[найсильніший варіант]
 
 BODY:
-[текст]
+[мініісторія з двома attention reset]
 
 PAYOFF:
-[текст]
+[чесна відповідь або панчлайн]
+
+LOOP:
+[коротка фраза, що з'єднує фінал із HOOK]
 
 CTA:
-[текст]
+[2–5 слів для екрана, без благання]
+
+ON_SCREEN:
+[3–4 короткі акцентні фрази через кому]
 
 VISUALS:
-[query 1, query 2, query 3, query 4, query 5, query 6]
+[8–10 конкретних англомовних stock-video queries через кому, у порядку сюжету]
 
-Створи скрипт ЗАРАЗ:"""
-
-    def _parse_script(self, content: str) -> Dict:
-        """Парсинг AI відповіді"""
-        hook = ""
-        body = ""
-        payoff = ""
-        cta = ""
-        visuals = ""
-        current_section = None
-
-        for line in content.split('\n'):
-            line = line.strip()
-
-            if line.upper().startswith('HOOK:'):
-                current_section = 'hook'
-                hook = line[5:].strip()
-            elif line.upper().startswith('BODY:'):
-                current_section = 'body'
-                body = line[5:].strip()
-            elif line.upper().startswith('PAYOFF:'):
-                current_section = 'payoff'
-                payoff = line[7:].strip()
-            elif line.upper().startswith('CTA:'):
-                current_section = 'cta'
-                cta = line[4:].strip()
-            elif line.upper().startswith('VISUALS:'):
-                current_section = 'visuals'
-                visuals = line[8:].strip()
-            elif line and current_section:
-                if current_section == 'hook':
-                    hook += ' ' + line
-                elif current_section == 'body':
-                    body += ' ' + line
-                elif current_section == 'payoff':
-                    payoff += ' ' + line
-                elif current_section == 'cta':
-                    cta += ' ' + line
-                elif current_section == 'visuals':
-                    visuals += ' ' + line
-
-        full_script = ' '.join(
-            part.strip() for part in (hook, body, payoff, cta) if part.strip()
-        )
-        visual_queries = [
-            query.strip().strip('[]-')
-            for query in visuals.split(',')
-            if query.strip().strip('[]-')
-        ][:8]
-
-        return {
-            'hook': hook.strip(),
-            'body': body.strip(),
-            'payoff': payoff.strip(),
-            'cta': cta.strip(),
-            'full_script': full_script.strip(),
-            'visual_queries': visual_queries
-        }
-
-    def _estimate_duration(self, text: str) -> int:
-        """Оцінка тривалості"""
-        words = len(text.split())
-        wps = self.global_settings['words_per_second']
-        return int(words / wps)
-
-    def generate_seo_metadata(self, script: Dict) -> Dict:
-        """Генерація SEO метаданих"""
-        hook = script['hook'].strip().rstrip('.')
-        niche = script['niche_name']
-
-        title = hook if len(hook) >= 32 else f"{hook} — {niche}"
-        title = title[:90].rstrip()
-
-        description = f"""🔥 {script['hook']}
-
-{script['body'][:220]}
-
-{script.get('payoff', '')}
-
-💡 {script['cta']}
-
-🎯 Підписуйся для більше контенту про {niche.lower()}!
-
-#Shorts #{script['niche']} #{script['keywords'][0] if script['keywords'] else 'viral'}
+SOUND_MOOD:
+[2–3 англійські слова]
 """
 
-        tags = [
-            script['niche'],
-            niche,
-            'shorts',
-            'youtube shorts'
-        ] + script['keywords'][:6]
+    def _parse_script(self, content: str) -> Dict:
+        aliases = {
+            "TOPIC": "topic",
+            "ANGLE": "angle",
+            "HOOK_A": "hook_a",
+            "HOOK_B": "hook_b",
+            "HOOK_C": "hook_c",
+            "HOOK": "hook",
+            "BODY": "body",
+            "PAYOFF": "payoff",
+            "LOOP": "loop",
+            "CTA": "cta",
+            "ON_SCREEN": "on_screen",
+            "VISUALS": "visuals",
+            "SOUND_MOOD": "sound_mood",
+        }
+        sections = {value: "" for value in aliases.values()}
+        current = None
+
+        for raw_line in content.splitlines():
+            line = raw_line.strip().strip("*#")
+            match = re.match(r"^([A-Z_]+)\s*:\s*(.*)$", line, re.IGNORECASE)
+            if match and match.group(1).upper() in aliases:
+                current = aliases[match.group(1).upper()]
+                sections[current] = match.group(2).strip()
+            elif line and current:
+                sections[current] = f"{sections[current]} {line}".strip()
+
+        hook_candidates = [
+            sections[key].strip()
+            for key in ("hook_a", "hook_b", "hook_c")
+            if sections[key].strip()
+        ]
+        hook = sections["hook"].strip() or (hook_candidates[0] if hook_candidates else "")
+        full_script = " ".join(
+            value.strip()
+            for value in (
+                hook,
+                sections["body"],
+                sections["payoff"],
+                sections["loop"],
+            )
+            if value.strip()
+        )
+        visuals = self._split_list(sections["visuals"], limit=10)
+        on_screen = self._split_list(sections["on_screen"], limit=4)
 
         return {
-            'title': title,
-            'description': description,
-            'tags': tags[:10],
-            'category_id': '22'
+            "topic": sections["topic"].strip(),
+            "angle": sections["angle"].strip(),
+            "hook_candidates": hook_candidates,
+            "hook": hook,
+            "body": sections["body"].strip(),
+            "payoff": sections["payoff"].strip(),
+            "loop": sections["loop"].strip(),
+            "cta": sections["cta"].strip(),
+            "full_script": full_script,
+            "visual_queries": visuals,
+            "on_screen_text": on_screen,
+            "sound_mood": sections["sound_mood"].strip(),
+        }
+
+    @staticmethod
+    def _split_list(value: str, limit: int) -> List[str]:
+        return [
+            item.strip().strip("[]-*•0123456789. ")
+            for item in re.split(r"[,;\n]", value)
+            if item.strip().strip("[]-*•0123456789. ")
+        ][:limit]
+
+    def _score_script(self, script: Dict) -> int:
+        score = 0
+        hook_words = script.get("hook", "").split()
+        total_words = script.get("full_script", "").split()
+        body_words = script.get("body", "").split()
+
+        if 4 <= len(hook_words) <= 8:
+            score += 20
+        elif 3 <= len(hook_words) <= 11:
+            score += 10
+        if 45 <= len(total_words) <= 88:
+            score += 18
+        elif 35 <= len(total_words) <= 100:
+            score += 8
+        if 25 <= len(body_words) <= 65:
+            score += 10
+        if script.get("payoff"):
+            score += 12
+        if script.get("loop"):
+            score += 10
+        if len(script.get("visual_queries", [])) >= 7:
+            score += 10
+        if len(script.get("on_screen_text", [])) >= 3:
+            score += 5
+        if len(script.get("hook_candidates", [])) >= 3:
+            score += 5
+        if script.get("cta") and len(script["cta"].split()) <= 6:
+            score += 5
+        if not self._is_duplicate(script.get("hook", "")):
+            score += 5
+
+        generic = (
+            "ти не повіриш",
+            "про це ніхто не говорить",
+            "99% людей",
+            "шокуючий факт",
+            "в сучасному світі",
+        )
+        lowered = script.get("full_script", "").lower()
+        if any(phrase in lowered for phrase in generic):
+            score -= 15
+        if not script.get("hook") or not script.get("body"):
+            score -= 30
+        return max(0, min(100, score))
+
+    def _estimate_duration(self, text: str) -> int:
+        words = len(text.split())
+        words_per_second = float(self.global_settings.get("words_per_second", 2.5))
+        return max(1, round(words / words_per_second))
+
+    def _load_history(self) -> List[Dict]:
+        try:
+            if self.history_path.exists():
+                with self.history_path.open("r", encoding="utf-8") as file:
+                    data = json.load(file)
+                if isinstance(data, list):
+                    return data[-self.history_limit :]
+        except Exception as exc:
+            logger.warning("Could not read content history: %s", exc)
+        return []
+
+    def _remember(self, script: Dict) -> None:
+        record = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "niche": script.get("niche"),
+            "topic": script.get("topic"),
+            "hook": script.get("hook"),
+            "quality_score": script.get("quality_score"),
+        }
+        self.history = (self.history + [record])[-self.history_limit :]
+        try:
+            self.history_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.history_path.open("w", encoding="utf-8") as file:
+                json.dump(self.history, file, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            logger.warning("Could not persist content history: %s", exc)
+
+    def _is_duplicate(self, hook: str) -> bool:
+        current = set(self._normalised_words(hook))
+        if not current:
+            return False
+        for item in self.history[-20:]:
+            previous = set(self._normalised_words(item.get("hook", "")))
+            union = current | previous
+            if union and len(current & previous) / len(union) >= 0.62:
+                return True
+        return False
+
+    @staticmethod
+    def _normalised_words(value: str) -> List[str]:
+        return [
+            token
+            for token in re.findall(r"[a-zA-Zа-яА-ЯіІїЇєЄґҐ0-9]+", value.lower())
+            if len(token) > 2
+        ]
+
+    def generate_seo_metadata(self, script: Dict) -> Dict:
+        hook = script["hook"].strip().rstrip(".!?")
+        topic = script.get("topic") or script["niche_name"]
+        title = hook if len(hook) >= 28 else f"{hook} — {topic}"
+        title = title[:92].rstrip(" -—")
+
+        description = (
+            f"{script['hook']}\n\n"
+            f"{script.get('payoff', '')}\n\n"
+            f"{script.get('cta', '')}\n\n"
+            f"#Shorts #{script['niche']} #українською"
+        )
+        tags = [
+            script["niche"],
+            script["niche_name"],
+            topic,
+            "shorts",
+            "українські shorts",
+        ] + script.get("keywords", [])[:5]
+        return {
+            "title": title,
+            "description": description,
+            "tags": tags[:10],
+            "category_id": "22",
         }
 
     def get_daily_stats(self) -> Dict:
-        """Статистика у форматі, сумісному з оркестратором."""
         return {
-            'provider': self.provider,
-            'model': self.groq_model if self.provider == 'groq' else self.provider,
-            'tokens_used': 0,
-            'daily_cost': 0.0
+            "provider": self.provider,
+            "model": self.groq_model if self.provider == "groq" else self.provider,
+            "tokens_used": 0,
+            "daily_cost": 0.0,
         }
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from dotenv import load_dotenv
+
     load_dotenv()
-
     logging.basicConfig(level=logging.INFO)
-
     generator = FreeContentGenerator()
-
-    print("\n🆓 FREE Content Generator Test")
-    print("="*60)
-
-    script = generator.generate_script(niche_id='motivation')
-
-    print(f"\nНІША: {script['niche_name']}")
-    print(f"ТРИВАЛІСТЬ: {script['estimated_duration']} секунд")
-    print(f"ПРОВАЙДЕР: {script['metadata']['provider']}")
-    print(f"ВАРТІСТЬ: ${script['metadata']['cost']}")
-    print("="*60)
-    print(f"\nHOOK:\n{script['hook']}")
-    print(f"\nBODY:\n{script['body']}")
-    print(f"\nCTA:\n{script['cta']}")
-    print("\n" + "="*60)
-
-    seo = generator.generate_seo_metadata(script)
-    print(f"\nTITLE: {seo['title']}")
-    print(f"TAGS: {', '.join(seo['tags'][:5])}")
+    result = generator.generate_script(niche_id="fun_facts")
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

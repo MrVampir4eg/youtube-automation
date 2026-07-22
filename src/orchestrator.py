@@ -88,6 +88,10 @@ class VideoProducer:
 
             logger.info(f"  Ніша: {script['niche_name']}")
             logger.info(
+                f"  Якість сценарію: {script.get('quality_score', 'n/a')}/100"
+            )
+            logger.info(f"  Тема: {script.get('topic', script['niche_name'])}")
+            logger.info(
                 f"  Тип: {script.get('template', script['metadata'].get('provider', 'default'))}"
             )
             logger.info(f"  Тривалість: {script['estimated_duration']}s")

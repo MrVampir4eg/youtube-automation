@@ -38,8 +38,8 @@ class VideoRenderer:
         self.pixabay_api_key = os.getenv('PIXABAY_API_KEY')
         self._pexels_warning_emitted = False
         self.scene_duration = max(
-            2.5,
-            float(os.getenv('SCENE_DURATION_SECONDS', 4.5))
+            1.8,
+            float(os.getenv('SCENE_DURATION_SECONDS', 2.8))
         )
 
         # Free Render instance має мало RAM, тому за замовчуванням
@@ -109,7 +109,9 @@ class VideoRenderer:
             queries = list(dict.fromkeys(query for query in queries if query))
             random.shuffle(queries)
 
-            scene_count = max(4, min(10, math.ceil(duration / self.scene_duration)))
+            # 6-14 hard cuts keep a short visually alive without turning it
+            # into an unreadable slideshow.
+            scene_count = max(6, min(14, math.ceil(duration / self.scene_duration)))
             segment_duration = duration / scene_count
 
             for index in range(scene_count):
@@ -402,8 +404,11 @@ class VideoRenderer:
                 n_loops = int(duration / clip.duration) + 1
                 clip = concatenate_videoclips([clip] * n_loops)
 
-            # Обрізаємо до потрібної тривалості
-            clip = clip.subclip(0, min(clip.duration, duration))
+            # Один кешований ролик виглядає по-різному завдяки випадковій
+            # стартовій точці, але завжди має точну тривалість сцени.
+            max_start = max(0.0, clip.duration - duration)
+            start = random.uniform(0.0, max_start) if max_start > 0.35 else 0.0
+            clip = clip.subclip(start, min(clip.duration, start + duration))
 
         else:
             # Зображення - робимо статичний clip
@@ -434,9 +439,11 @@ class VideoRenderer:
         )
 
         for segment in segments:
+            style = 'hook' if segment['start'] < 1.6 else 'normal'
             txt_clip = self._create_caption_clip(
                 segment['text'],
-                highlight_last=True
+                highlight_last=True,
+                style=style
             )
             txt_clip = txt_clip.set_position(('center', caption_y))
             txt_clip = txt_clip.set_start(segment['start'])
@@ -445,6 +452,36 @@ class VideoRenderer:
             txt_clip = fadeout(txt_clip, 0.06)
 
             text_clips.append(txt_clip)
+
+        # Невеликі attention-reset плашки підтримують ритм між змінами сцен.
+        callouts = [
+            value for value in script_data.get('on_screen_text', [])
+            if value
+        ][:4]
+        for index, value in enumerate(callouts):
+            start = duration * (index + 1) / (len(callouts) + 2)
+            callout = self._create_caption_clip(
+                value.upper(),
+                style='callout'
+            )
+            callout = callout.set_position(('center', int(self.height * 0.16)))
+            callout = callout.set_start(start)
+            callout = callout.set_duration(min(1.0, max(0.55, duration - start)))
+            callout = fadein(callout, 0.08)
+            callout = fadeout(callout, 0.1)
+            text_clips.append(callout)
+
+        # CTA лишається візуальним, щоб озвучений фінал міг природно
+        # зациклитися назад у першу фразу.
+        cta_text = script_data.get('cta', '').strip()
+        if cta_text and duration > 2:
+            cta_duration = min(1.8, duration * 0.12)
+            cta = self._create_caption_clip(cta_text.upper(), style='cta')
+            cta = cta.set_position(('center', int(self.height * 0.12)))
+            cta = cta.set_start(max(0.0, duration - cta_duration))
+            cta = cta.set_duration(cta_duration)
+            cta = fadein(cta, 0.1)
+            text_clips.append(cta)
 
         # Композит відео + текст
         final = CompositeVideoClip([video_clip] + text_clips)
@@ -507,7 +544,8 @@ class VideoRenderer:
 
     def _create_caption_clip(self,
                              text: str,
-                             highlight_last: bool = False) -> ImageClip:
+                             highlight_last: bool = False,
+                             style: str = 'normal') -> ImageClip:
         """Створити читабельний caption із темною плашкою та жовтим акцентом."""
         font_paths = [
             os.getenv('CAPTION_FONT'),
@@ -515,7 +553,12 @@ class VideoRenderer:
             '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'
         ]
 
-        font_size = max(34, round(self.width * 76 / 1080))
+        size_multiplier = {
+            'hook': 1.16,
+            'callout': 0.82,
+            'cta': 0.86
+        }.get(style, 1.0)
+        font_size = max(30, round(self.width * 76 / 1080 * size_multiplier))
         stroke_width = max(2, round(self.width * 4 / 1080))
         font = None
         for font_path in font_paths:
@@ -559,10 +602,15 @@ class VideoRenderer:
         ]
         box_width = min(self.width - 12, max(line_widths, default=0) + padding_x * 2)
         box_left = (self.width - box_width) // 2
+        box_fill = (
+            (255, 213, 74, 232)
+            if style in {'callout', 'cta'}
+            else (0, 0, 0, 195 if style == 'hook' else 165)
+        )
         draw.rounded_rectangle(
             (box_left, 0, box_left + box_width, image.height),
             radius=max(12, font_size // 2),
-            fill=(0, 0, 0, 165)
+            fill=box_fill
         )
 
         y = padding_y
@@ -573,18 +621,25 @@ class VideoRenderer:
         for line, line_width in zip(lines, line_widths):
             x = (self.width - line_width) // 2
             for token in line:
-                fill = (
-                    '#FFD54A'
-                    if highlight_last and token_index == last_token_index
-                    else 'white'
-                )
+                if style in {'callout', 'cta'}:
+                    fill = '#111111'
+                    token_stroke_width = 0
+                    token_stroke_fill = '#111111'
+                else:
+                    fill = (
+                        '#FFD54A'
+                        if highlight_last and token_index == last_token_index
+                        else 'white'
+                    )
+                    token_stroke_width = stroke_width
+                    token_stroke_fill = 'black'
                 draw.text(
                     (x, y),
                     token,
                     font=font,
                     fill=fill,
-                    stroke_width=stroke_width,
-                    stroke_fill='black'
+                    stroke_width=token_stroke_width,
+                    stroke_fill=token_stroke_fill
                 )
                 token_width = draw.textbbox((0, 0), token, font=font)[2]
                 x += token_width + space_width

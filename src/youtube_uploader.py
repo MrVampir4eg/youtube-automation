@@ -130,7 +130,7 @@ class YouTubeUploader:
                     description: str,
                     tags: list,
                     category_id: str = '22',
-                    privacy_status: str = 'private',
+                    privacy_status: str = 'public',
                     made_for_kids: bool = False) -> Dict:
         """
         Завантаження відео на YouTube

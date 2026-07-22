@@ -18,6 +18,7 @@ config/*.json
 *.db
 *.sqlite
 *.sqlite3
+database/content_history.json
 
 # Output files
 output/
