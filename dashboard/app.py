@@ -128,9 +128,12 @@ ADMIN_UI_ENDPOINTS = {
     'index', 'login', 'logout', 'forgot_password', 'reset_password',
     'admin_security_page',
 }
-READ_ONLY_ENDPOINTS = {
-    'get_stats', 'list_videos', 'platforms_status', 'get_schedule',
-    'get_niches', 'affiliate_stats', 'ad_center_summary', 'bot_status',
+PUBLIC_DASHBOARD_ENDPOINTS = {
+    'get_stats', 'list_videos', 'platforms_status', 'youtube_status',
+    'get_schedule', 'get_niches', 'affiliate_stats', 'ad_center_summary',
+    'bot_status', 'channel_profiles', 'update_channel_profile',
+    'affiliate_offers', 'update_affiliate_offer', 'generate_video',
+    'generation_status', 'refresh_analytics',
 }
 BOT_ENDPOINTS = {'generate_video', 'generation_status', 'bot_status', 'health'}
 
@@ -144,7 +147,9 @@ def require_admin_and_csrf():
     if ADMIN_UI_DISABLED and endpoint in ADMIN_UI_ENDPOINTS:
         if endpoint == 'index':
             return render_template(
-                'farm_dashboard.html',
+                'index.html',
+                csrf_token=_csrf_token(),
+                admin=None,
                 scheduler_running=scheduler.is_running,
             )
         return jsonify({
@@ -152,7 +157,12 @@ def require_admin_and_csrf():
             'error': 'Веб-адмінку вимкнено; працює автоматичний режим',
         }), 404
 
-    if ADMIN_UI_DISABLED and endpoint in READ_ONLY_ENDPOINTS:
+    if ADMIN_UI_DISABLED and endpoint in PUBLIC_DASHBOARD_ENDPOINTS:
+        if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and not _valid_csrf():
+            return jsonify({
+                'success': False,
+                'error': 'CSRF перевірка не пройдена',
+            }), 403
         return None
 
     if not ADMIN_UI_DISABLED and endpoint in {

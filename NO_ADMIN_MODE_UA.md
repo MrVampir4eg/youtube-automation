@@ -14,3 +14,6 @@ DISABLE_ADMIN_UI=True
 
 Щоб тимчасово повернути панель для діагностики, встановіть
 `DISABLE_ADMIN_UI=False` і зробіть redeploy.
+
+Dashboard ферми при цьому залишається доступним у режимі перегляду й керування
+без email/пароля; прибрані лише сторінки login, reset password і security.
