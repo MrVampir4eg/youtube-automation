@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Profit Platform — ферма</title>
+  <style>
+    :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#080d18;color:#edf2ff;font:15px system-ui,sans-serif}
+    main{max-width:1100px;margin:0 auto;padding:28px 18px 48px}.top{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:22px}
+    h1{margin:0;font-size:30px}h2{font-size:18px;margin:0 0 16px}.muted{color:#9eacc8}.live{color:#63e69a}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{padding:20px;border:1px solid #243250;border-radius:16px;background:#111a2d}
+    .metric{font-size:28px;font-weight:800;margin-top:6px}.label{color:#9eacc8;font-size:13px}.wide{margin-top:14px}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#173d2c;color:#7ef0ab;font-size:12px;font-weight:700}
+    .row{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #25314a}.row:last-child{border-bottom:0}a{color:#9db4ff}.error{color:#ff9d9d}
+    @media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.top{display:block}.top .muted{margin-top:8px}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="top"><div><h1>Profit Platform</h1><div class="muted">Перегляд стану ферми без email і пароля</div></div><span class="pill"><span class="live">●</span> автоматичний режим</span></div>
+  <section class="grid">
+    <div class="card"><div class="label">Відео</div><div class="metric" id="videos">—</div></div>
+    <div class="card"><div class="label">Перегляди</div><div class="metric" id="views">—</div></div>
+    <div class="card"><div class="label">Affiliate revenue</div><div class="metric" id="revenue">—</div></div>
+    <div class="card"><div class="label">AI cost</div><div class="metric" id="cost">—</div></div>
+  </section>
+  <section class="card wide"><h2>Стан системи</h2><div id="system" class="muted">Завантаження…</div></section>
+  <section class="card wide"><h2>Останні відео</h2><div id="videos-list" class="muted">Завантаження…</div></section>
+</main>
+<script>
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt = (v) => Number(v || 0).toLocaleString('uk-UA');
+  const schedulerRunning = {{ 'true' if scheduler_running else 'false' }};
+  async function load(){
+    try{
+      const [stats, videos, platforms, schedule] = await Promise.all([
+        fetch('/api/stats',{cache:'no-store'}).then(r=>r.json()),
+        fetch('/api/videos?limit=8',{cache:'no-store'}).then(r=>r.json()),
+        fetch('/api/platforms/status',{cache:'no-store'}).then(r=>r.json()),
+        fetch('/api/schedule',{cache:'no-store'}).then(r=>r.json())
+      ]);
+      const total=stats.total||{}; const aff=stats.affiliate||{};
+      document.getElementById('videos').textContent=fmt(total.videos_created);
+      document.getElementById('views').textContent=fmt(total.total_views);
+      document.getElementById('revenue').textContent='$'+Number(aff.revenue||0).toFixed(2);
+      document.getElementById('cost').textContent='$'+Number(total.total_cost||0).toFixed(2);
+      const enabled=(platforms.enabled_platforms||[]).join(', ')||'не підключено';
+      const jobs=(schedule.jobs||[]).length;
+      document.getElementById('system').innerHTML=`Планувальник: <strong>${schedulerRunning ? 'активний' : 'очікує запуску'}</strong> · Наступних запусків: <strong>${jobs}</strong> · Платформи: <strong>${esc(enabled)}</strong>`;
+      const items=videos.videos||[];
+      document.getElementById('videos-list').innerHTML=items.length?items.map(v=>`<div class="row"><span>${esc(v.title)}<br><small class="muted">${esc(v.niche)} · ${esc(v.created_at)}</small></span>${v.youtube_url?`<a href="${esc(v.youtube_url)}" target="_blank" rel="noopener">YouTube</a>`:''}</div>`).join(''):'Поки немає відео';
+    }catch(e){document.getElementById('system').innerHTML='<span class="error">Не вдалося завантажити статистику</span>';console.error(e)}
+  }
+  load(); setInterval(load,60000);
+</script>
+</body>
+</html>

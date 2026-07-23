@@ -128,6 +128,10 @@ ADMIN_UI_ENDPOINTS = {
     'index', 'login', 'logout', 'forgot_password', 'reset_password',
     'admin_security_page',
 }
+READ_ONLY_ENDPOINTS = {
+    'get_stats', 'list_videos', 'platforms_status', 'get_schedule',
+    'get_niches', 'affiliate_stats', 'ad_center_summary', 'bot_status',
+}
 BOT_ENDPOINTS = {'generate_video', 'generation_status', 'bot_status', 'health'}
 
 
@@ -140,13 +144,16 @@ def require_admin_and_csrf():
     if ADMIN_UI_DISABLED and endpoint in ADMIN_UI_ENDPOINTS:
         if endpoint == 'index':
             return render_template(
-                'automation_status.html',
+                'farm_dashboard.html',
                 scheduler_running=scheduler.is_running,
             )
         return jsonify({
             'success': False,
             'error': 'Веб-адмінку вимкнено; працює автоматичний режим',
         }), 404
+
+    if ADMIN_UI_DISABLED and endpoint in READ_ONLY_ENDPOINTS:
+        return None
 
     if not ADMIN_UI_DISABLED and endpoint in {
         'login', 'forgot_password', 'reset_password'
@@ -1097,11 +1104,14 @@ def update_affiliate_offer(offer_id):
 
 @app.route('/api/ad-center/summary')
 def ad_center_summary():
-    return jsonify({
+    payload = {
         'success': True,
         **db.get_ad_center_summary(request.args.get('profile_id')),
         'advertiser_leads': db.list_advertiser_leads(50),
-    })
+    }
+    if ADMIN_UI_DISABLED:
+        payload['advertiser_leads'] = []
+    return jsonify(payload)
 
 
 @app.route('/api/ad-events', methods=['POST'])
