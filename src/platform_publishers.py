@@ -16,6 +16,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Optional
+from urllib.parse import urlencode
 
 import requests
 
@@ -46,6 +47,23 @@ def _unique(values: Iterable[str]) -> list:
     return result
 
 
+def build_affiliate_tracking_url(affiliate: Dict, platform: str) -> str:
+    original_url = str(affiliate.get("url") or "").strip()
+    base_url = str(affiliate.get("tracking_base_url") or "").strip().rstrip("/")
+    offer_id = str(affiliate.get("offer_id") or "").strip()
+    video_id = str(affiliate.get("video_id") or "").strip()
+    if not (base_url and offer_id and video_id):
+        return original_url
+    params = urlencode({
+        "v": video_id,
+        "p": platform,
+        "subid": f"{video_id}-{platform}",
+    })
+    funnel_mode = os.getenv("AFFILIATE_FUNNEL_MODE", "landing").strip().lower()
+    route = "go" if funnel_mode != "direct" else "r"
+    return f"{base_url}/{route}/{offer_id}?{params}"
+
+
 def build_platform_metadata(script: Dict, seo: Dict) -> Dict[str, Dict]:
     """Create native-looking metadata instead of cloning one caption everywhere."""
     topic = str(script.get("topic") or script.get("niche_name") or "Цікавий факт")
@@ -66,25 +84,48 @@ def build_platform_metadata(script: Dict, seo: Dict) -> Dict[str, Dict]:
     affiliate_note = ""
     if affiliate:
         affiliate_note = "\n\n".join(filter(None, [
-            f"🔗 {affiliate.get('name')}: {affiliate.get('url')}",
+            f"🔗 {affiliate.get('name')}: {build_affiliate_tracking_url(affiliate, 'social')}",
             affiliate.get('disclosure'),
         ]))
 
     youtube_description = str(seo.get("description") or "")
+    if affiliate:
+        original_link = str(affiliate.get("url") or "")
+        tracked_link = build_affiliate_tracking_url(affiliate, "youtube")
+        if original_link and tracked_link:
+            youtube_description = youtube_description.replace(original_link, tracked_link)
+        youtube_description = "\n\n".join(filter(None, [
+            youtube_description,
+            f"🔗 {affiliate.get('name')}: посилання в профілі каналу",
+            affiliate.get("disclosure"),
+        ]))
     if "#Shorts" not in youtube_description:
         youtube_description = f"#Shorts\n\n{youtube_description}".strip()
+
+    instagram_affiliate = ""
+    facebook_affiliate = ""
+    if affiliate:
+        instagram_affiliate = "\n\n".join(filter(None, [
+            f"🔗 {affiliate.get('name')}: посилання в профілі",
+            affiliate.get('disclosure'),
+        ]))
+        facebook_affiliate = "\n\n".join(filter(None, [
+            f"🔗 {affiliate.get('name')}: {build_affiliate_tracking_url(affiliate, 'facebook')}",
+            affiliate.get('disclosure'),
+        ]))
 
     instagram_caption = "\n\n".join(filter(None, [
         hook,
         payoff,
         "Збережи, щоб не загубити, і надішли тому, кого це здивує.",
         tag_line,
-        affiliate_note,
+        instagram_affiliate,
     ]))[:2200]
 
     tiktok_caption = " ".join(filter(None, [
         hook.rstrip(".!?"),
         "Додивись до кінця й напиши свою версію.",
+        "Партнерське посилання — у профілі." if affiliate else "",
         tag_line,
         affiliate.get("disclosure") if affiliate else "",
     ]))[:2200]
@@ -94,7 +135,7 @@ def build_platform_metadata(script: Dict, seo: Dict) -> Dict[str, Dict]:
         payoff,
         "А ти про це знав/знала? Поділись думкою в коментарях.",
         tag_line,
-        affiliate_note,
+        facebook_affiliate,
     ]))[:5000]
 
     return {

@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 from database.models import Database
 from src.free_content_generator import FreeContentGenerator
-from src.platform_publishers import UniversalPublisher, build_platform_metadata
+from src.platform_publishers import (
+    UniversalPublisher,
+    build_affiliate_tracking_url,
+    build_platform_metadata,
+)
 
 
 class FakeYouTubeUploader:
@@ -42,6 +46,7 @@ class ChannelProfilesAffiliateTests(unittest.TestCase):
                 db.list_affiliate_offers(second["profile_id"])[0]["offer_id"],
                 offer["offer_id"],
             )
+            db.close()
 
     def test_affiliate_metadata_has_link_and_disclosure(self):
         script = {
@@ -69,6 +74,47 @@ class ChannelProfilesAffiliateTests(unittest.TestCase):
         self.assertTrue(metadata["youtube"]["contains_synthetic_media"])
         self.assertIn("Партнерське посилання", metadata["instagram"]["caption"])
         self.assertIn("Партнерське посилання", metadata["tiktok"]["caption"])
+
+    def test_reels_tracking_uses_offer_landing_page(self):
+        with patch.dict(os.environ, {"AFFILIATE_FUNNEL_MODE": "landing"}, clear=False):
+            url = build_affiliate_tracking_url({
+                "offer_id": "abc123",
+                "video_id": "vid123",
+                "tracking_base_url": "https://creator.example",
+                "url": "https://partner.example/?ref=owner",
+            }, "instagram")
+        self.assertTrue(url.startswith("https://creator.example/go/abc123?"))
+        self.assertIn("p=instagram", url)
+
+    def test_auto_select_prefers_confirmed_epc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(str(Path(directory) / "test.db"))
+            profile = db.create_channel_profile("Affiliate")
+            low = db.create_affiliate_offer(profile["profile_id"], {
+                "name": "Low EPC", "url": "https://low.example/",
+                "description": "Low", "keywords": ["tech"],
+            })
+            high = db.create_affiliate_offer(profile["profile_id"], {
+                "name": "High EPC", "url": "https://high.example/",
+                "description": "High", "keywords": ["tech"],
+            })
+            for _ in range(5):
+                db.record_affiliate_click(low["offer_id"], {"platform": "test"})
+                db.record_affiliate_click(high["offer_id"], {"platform": "test"})
+            db.record_affiliate_conversion(low["offer_id"], {
+                "order_id": "low-1", "amount": 1, "status": "approved",
+            })
+            db.record_affiliate_conversion(high["offer_id"], {
+                "order_id": "high-1", "amount": 8, "status": "approved",
+            })
+            with patch.dict(os.environ, {
+                "AFFILIATE_EXPLORATION_FACTOR": "0",
+            }, clear=False):
+                selected = db.select_best_affiliate_offer(
+                    profile["profile_id"], niche_id="tech"
+                )
+            self.assertEqual(selected["offer_id"], high["offer_id"])
+            db.close()
 
     def test_selected_youtube_uploader_is_used(self):
         with tempfile.TemporaryDirectory() as directory:

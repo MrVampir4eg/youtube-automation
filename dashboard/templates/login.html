@@ -45,12 +45,7 @@
             <div class="message {{ category }}">{{ message }}</div>
         {% endfor %}
         {% if error %}<div class="message error">{{ error }}</div>{% endif %}
-        {% if admin_bootstrap_error %}
-            <div class="message error">
-                Render не зміг створити адміністратора: {{ admin_bootstrap_error }}.
-                Виправте <strong>ADMIN_PASSWORD</strong> і зробіть redeploy.
-            </div>
-        {% elif not admin_ready %}
+        {% if not admin_ready %}
             <div class="message warning">
                 Адміністратора ще не створено. Додайте в Render секрети
                 <strong>ADMIN_EMAIL</strong> і <strong>ADMIN_PASSWORD</strong>, потім зробіть redeploy.

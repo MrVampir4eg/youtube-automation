@@ -6,6 +6,8 @@ Flask Dashboard
 import os
 import secrets
 import uuid
+import hashlib
+import hmac
 from pathlib import Path
 from threading import Lock, Thread
 from flask import (
@@ -14,7 +16,7 @@ from flask import (
 )
 from datetime import datetime, timedelta, timezone
 import json
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 from google_auth_oauthlib.flow import Flow
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -47,13 +49,11 @@ scheduler = AutomationScheduler()
 producer = scheduler.producer
 db = Database()
 admin_security = AdminSecurity(db)
-admin_bootstrap_error = None
 try:
     admin_security.bootstrap_from_environment()
 except ValueError as exc:
     # A weak/invalid bootstrap password should not crash Render health checks;
     # login clearly shows that the administrator is not configured.
-    admin_bootstrap_error = str(exc)
     app.logger.error("Admin bootstrap failed: %s", exc)
 
 # Запуск scheduler
@@ -66,11 +66,6 @@ generation_jobs_lock = Lock()
 generation_worker_lock = Lock()
 login_attempts = {}
 login_attempts_lock = Lock()
-
-
-@app.context_processor
-def inject_security_status():
-    return {'admin_bootstrap_error': admin_bootstrap_error}
 
 
 def _client_ip():
@@ -124,7 +119,8 @@ def _clear_attempts(bucket):
 
 PUBLIC_ENDPOINTS = {
     'login', 'forgot_password', 'reset_password', 'health',
-    'share_video_for_platform', 'static'
+    'share_video_for_platform', 'affiliate_offer_page',
+    'affiliate_redirect', 'affiliate_webhook', 'advertise', 'static'
 }
 BOT_ENDPOINTS = {'generate_video', 'generation_status', 'bot_status', 'health'}
 
@@ -401,6 +397,58 @@ def index():
     )
 
 
+@app.route('/advertise', methods=['GET', 'POST'])
+def advertise():
+    """Public, rate-limited intake page for legitimate advertisers."""
+    submitted = False
+    error = None
+    if request.method == 'POST':
+        bucket = f"advertiser-lead:{_client_ip()}"
+        if not _valid_csrf():
+            error = 'Сторінка застаріла. Оновіть її та повторіть.'
+        elif request.form.get('company_site', ''):
+            submitted = True
+        elif _rate_limited(bucket, limit=3, window_minutes=60):
+            error = 'Забагато заявок. Спробуйте пізніше.'
+        else:
+            try:
+                contact_name = request.form.get('contact_name', '').strip()
+                company = request.form.get('company', '').strip()
+                email = admin_security.validate_email(request.form.get('email', ''))
+                website = request.form.get('website', '').strip()
+                parsed = urlparse(website) if website else None
+                budget = float(request.form.get('budget') or 0)
+                if not 2 <= len(contact_name) <= 100:
+                    raise ValueError('Вкажіть контактну особу')
+                if not 2 <= len(company) <= 120:
+                    raise ValueError('Вкажіть назву компанії або продукту')
+                if website and (parsed.scheme not in {'http', 'https'} or not parsed.netloc):
+                    raise ValueError('Вкажіть повну адресу сайту')
+                if budget < 0 or budget > 10_000_000:
+                    raise ValueError('Перевірте бюджет кампанії')
+                lead = db.create_advertiser_lead({
+                    'contact_name': contact_name,
+                    'email': email,
+                    'company': company,
+                    'website': website or None,
+                    'budget': budget,
+                    'currency': request.form.get('currency', 'USD'),
+                    'objective': request.form.get('objective', '').strip()[:500],
+                    'notes': request.form.get('notes', '').strip()[:2000],
+                })
+                _record_failed_attempt(bucket)
+                db.log_audit(
+                    'advertiser_lead_received', {'lead_id': lead['lead_id']},
+                    _client_ip(),
+                )
+                submitted = True
+            except (ValueError, TypeError) as exc:
+                error = str(exc)
+    return render_template(
+        'advertise.html', csrf_token=_csrf_token(), submitted=submitted, error=error
+    )
+
+
 @app.route('/youtube/connect')
 def youtube_connect():
     """Почати Google OAuth для YouTube-каналу."""
@@ -539,9 +587,28 @@ def get_stats():
 
     # Денна статистика за 7 днів
     daily_stats = db.get_daily_stats(days=7)
+    weekly_affiliate = db.get_affiliate_stats(
+        since=(datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    )
+    try:
+        weekly_target = max(
+            0.0, float(os.getenv('WEEKLY_REVENUE_TARGET', '505'))
+        )
+    except ValueError:
+        weekly_target = 505.0
 
     return jsonify({
         'total': total_stats,
+        'affiliate': db.get_affiliate_stats(),
+        'weekly_target': {
+            'amount': weekly_target,
+            'currency': os.getenv('WEEKLY_REVENUE_CURRENCY', 'USD'),
+            'confirmed_revenue': weekly_affiliate.get('revenue', 0),
+            'remaining': round(
+                max(0, weekly_target - weekly_affiliate.get('revenue', 0)), 4
+            ),
+            'conversion_rate': weekly_affiliate.get('conversion_rate', 0),
+        },
         'session': session_stats,
         'top_videos': [{
             'video_id': v['video_id'],
@@ -651,7 +718,11 @@ def generate_video():
     """Запустити фонову генерацію відео."""
     data = request.get_json(silent=True) or {}
     niche = data.get('niche')
-    count = max(1, min(int(data.get('count', 1)), 1))
+    try:
+        max_batch = max(1, min(int(os.getenv('MAX_GENERATION_BATCH', '8')), 20))
+        count = max(1, min(int(data.get('count', 1)), max_batch))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'count повинен бути цілим числом'}), 400
     content_mode = str(data.get('content_mode', 'organic')).strip().lower()
     profile_id = str(data.get('profile_id', 'default')).strip()
     affiliate_offer_id = data.get('affiliate_offer_id') or None
@@ -733,6 +804,154 @@ def generate_video():
     }), 202
 
 
+@app.route('/go/<offer_id>')
+def affiliate_offer_page(offer_id):
+    """Reels-first offer page before the tracked partner redirect."""
+    if not offer_id.isalnum() or len(offer_id) > 40:
+        return jsonify({'success': False, 'error': 'Пропозицію не знайдено'}), 404
+    offer = db.get_affiliate_offer(offer_id) or db.get_campaign_by_slug(offer_id)
+    if not offer:
+        return jsonify({'success': False, 'error': 'Пропозицію не знайдено'}), 404
+
+    params = {
+        'v': request.args.get('v', '').strip()[:80],
+        'p': request.args.get('p', 'social').strip().lower()[:40] or 'social',
+        'subid': request.args.get('subid', '').strip()[:160],
+    }
+    params = {key: value for key, value in params.items() if value}
+    query = urlencode(params)
+    tracking_url = url_for(
+        'affiliate_redirect',
+        offer_id=offer.get('tracking_slug') or offer.get('offer_id') or offer_id,
+    )
+    if query:
+        tracking_url = f'{tracking_url}?{query}'
+    return render_template('affiliate_offer.html', offer=offer, tracking_url=tracking_url)
+
+
+@app.route('/r/<offer_id>')
+def affiliate_redirect(offer_id):
+    """Track one affiliate click and redirect to the owner-approved URL."""
+    if not offer_id.isalnum() or len(offer_id) > 40:
+        return jsonify({'success': False, 'error': 'Пропозицію не знайдено'}), 404
+    offer = db.get_affiliate_offer(offer_id) or db.get_campaign_by_slug(offer_id)
+    if not offer:
+        return jsonify({'success': False, 'error': 'Пропозицію не знайдено'}), 404
+
+    video_id = request.args.get('v', '').strip()[:80] or None
+    platform = request.args.get('p', 'unknown').strip().lower()[:40]
+    sub_id = request.args.get('subid', '').strip()[:160]
+    ip_secret = (
+        os.getenv('CLICK_HASH_SECRET')
+        or os.getenv('SECRET_KEY')
+        or 'local-click-secret'
+    )
+    ip_hash = hashlib.sha256(
+        f'{ip_secret}:{_client_ip()}'.encode('utf-8')
+    ).hexdigest()
+    db.record_affiliate_click(
+        offer['offer_id'],
+        {
+            'video_id': video_id,
+            'platform': platform,
+            'sub_id': sub_id,
+            'referrer': request.referrer,
+            'user_agent': request.headers.get('User-Agent'),
+            'ip_hash': ip_hash,
+        },
+    )
+
+    try:
+        db.record_ad_event(
+            offer['offer_id'], 'click', video_id=video_id,
+            source='tracked_redirect',
+            referrer_host=urlparse(request.referrer or '').hostname or '',
+        )
+    except (ValueError, TypeError):
+        pass
+
+    original = urlsplit(offer['url'])
+    query = dict(parse_qsl(original.query, keep_blank_values=True))
+    query.update({
+        'utm_source': platform or 'social',
+        'utm_medium': 'affiliate',
+        'utm_campaign': offer.get('tracking_slug') or offer['offer_id'],
+    })
+    if video_id:
+        query['utm_content'] = video_id
+    target = urlunsplit((
+        original.scheme,
+        original.netloc,
+        original.path,
+        urlencode(query),
+        original.fragment,
+    ))
+    return redirect(target, code=302)
+
+
+def _save_affiliate_conversion(data, source):
+    offer_id = str(data.get('offer_id', '')).strip()
+    offer = db.get_affiliate_offer(offer_id)
+    if not offer:
+        raise ValueError('Партнерська пропозиція не знайдена')
+    video_id = str(data.get('video_id') or '').strip() or None
+    if video_id and not db.get_video(video_id):
+        raise ValueError('Відео для конверсії не знайдено')
+    payload = dict(data)
+    payload['source'] = source
+    return db.record_affiliate_conversion(offer_id, payload)
+
+
+@app.route('/api/affiliate/stats')
+def affiliate_stats():
+    return jsonify({
+        'success': True,
+        'stats': db.get_affiliate_stats(
+            profile_id=request.args.get('profile_id') or None,
+            video_id=request.args.get('video_id') or None,
+            offer_id=request.args.get('offer_id') or None,
+            since=request.args.get('since') or None,
+        ),
+    })
+
+
+@app.route('/api/affiliate/conversions', methods=['POST'])
+def affiliate_conversions():
+    try:
+        conversion = _save_affiliate_conversion(
+            request.get_json(silent=True) or {}, 'manual'
+        )
+        db.log_audit(
+            'affiliate_conversion_recorded',
+            {'conversion_id': conversion.get('conversion_id')},
+            _client_ip(),
+            1,
+        )
+        return jsonify({'success': True, 'conversion': conversion}), 201
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/affiliate/webhook', methods=['POST'])
+def affiliate_webhook():
+    secret = os.getenv('AFFILIATE_WEBHOOK_SECRET', '').strip()
+    signature = request.headers.get('X-Affiliate-Signature', '').strip()
+    if not secret or not signature:
+        return jsonify({'success': False, 'error': 'Webhook не налаштований'}), 503
+    expected = hmac.new(
+        secret.encode('utf-8'), request.get_data(), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return jsonify({'success': False, 'error': 'Невірний підпис'}), 403
+    try:
+        conversion = _save_affiliate_conversion(
+            request.get_json(silent=True) or {}, 'webhook'
+        )
+        return jsonify({'success': True, 'conversion_id': conversion.get('conversion_id')})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
 @app.route('/api/channel-profiles', methods=['GET', 'POST'])
 def channel_profiles():
     """List profiles or create a clean destination for another YouTube account."""
@@ -782,7 +1001,9 @@ def affiliate_offers():
         profile_id = request.args.get('profile_id')
         return jsonify({
             'success': True,
-            'offers': db.list_affiliate_offers(profile_id=profile_id)
+            'offers': db.list_affiliate_offers(
+                profile_id=profile_id, include_inactive=True
+            )
         })
 
     data = request.get_json(silent=True) or {}
@@ -807,11 +1028,21 @@ def affiliate_offers():
         keywords = [item.strip() for item in keywords.split(',') if item.strip()]
     offer = db.create_affiliate_offer(profile_id, {
         'name': name,
+        'advertiser_name': str(data.get('advertiser_name', '')).strip() or name,
+        'campaign_type': str(data.get('campaign_type', 'affiliate')).strip().lower(),
         'url': url,
         'description': description,
         'keywords': list(keywords)[:12],
         'cta': str(data.get('cta', '')).strip(),
         'disclosure': str(data.get('disclosure', '')).strip(),
+        'payout_model': str(data.get('payout_model', 'CPS')).strip().upper(),
+        'payout_value': data.get('payout_value', 0),
+        'currency': str(data.get('currency', 'USD')).strip().upper(),
+        'budget_total': data.get('budget_total', 0),
+        'starts_at': data.get('starts_at'),
+        'ends_at': data.get('ends_at'),
+        'approved_claims': str(data.get('approved_claims', '')).strip(),
+        'prohibited_claims': str(data.get('prohibited_claims', '')).strip(),
     })
     db.log_audit(
         'affiliate_offer_created',
@@ -819,6 +1050,77 @@ def affiliate_offers():
         _client_ip(), 1
     )
     return jsonify({'success': True, 'offer': offer}), 201
+
+
+@app.route('/api/affiliate-offers/<offer_id>', methods=['PATCH'])
+def update_affiliate_offer(offer_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        campaign = db.update_campaign_status(offer_id, str(data.get('status', '')))
+        db.log_audit(
+            'ad_campaign_status_changed',
+            {'offer_id': offer_id, 'status': campaign['status']},
+            _client_ip(), 1,
+        )
+        return jsonify({'success': True, 'campaign': campaign})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/ad-center/summary')
+def ad_center_summary():
+    return jsonify({
+        'success': True,
+        **db.get_ad_center_summary(request.args.get('profile_id')),
+        'advertiser_leads': db.list_advertiser_leads(50),
+    })
+
+
+@app.route('/api/ad-events', methods=['POST'])
+def create_ad_event():
+    data = request.get_json(silent=True) or {}
+    campaign = db.get_campaign(str(data.get('offer_id', '')))
+    if not campaign:
+        return jsonify({'success': False, 'error': 'Кампанію не знайдено'}), 404
+    event_type = str(data.get('event_type', 'conversion')).strip().lower()
+    try:
+        amount = float(data.get('amount') or 0)
+        if event_type == 'conversion' and amount == 0:
+            amount = float(campaign.get('payout_value') or 0)
+        if amount < 0 or amount > 10_000_000:
+            raise ValueError('Перевірте суму')
+        event_id = db.record_ad_event(
+            campaign['offer_id'], event_type, amount,
+            str(data.get('currency') or campaign.get('currency') or 'USD'),
+            video_id=data.get('video_id') or None,
+            source='manual_admin', external_ref=data.get('external_ref') or None,
+        )
+        db.log_audit(
+            'ad_event_recorded',
+            {'event_id': event_id, 'offer_id': campaign['offer_id'],
+             'event_type': event_type, 'amount': amount},
+            _client_ip(), 1,
+        )
+        return jsonify({'success': True, 'event_id': event_id}), 201
+    except (ValueError, TypeError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/advertiser-leads/<lead_id>', methods=['PATCH'])
+def update_advertiser_lead(lead_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        lead = db.update_advertiser_lead_status(
+            lead_id, str(data.get('status', ''))
+        )
+        db.log_audit(
+            'advertiser_lead_status_changed',
+            {'lead_id': lead_id, 'status': lead['status']},
+            _client_ip(), 1,
+        )
+        return jsonify({'success': True, 'lead': lead})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
 
 @app.route('/api/generate/<job_id>')

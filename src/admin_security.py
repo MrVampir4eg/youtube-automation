@@ -37,8 +37,8 @@ class AdminSecurity:
 
     @staticmethod
     def validate_password(password: str) -> None:
-        if len(password or "") < 10:
-            raise ValueError("Пароль повинен містити щонайменше 10 символів")
+        if len(password or "") < 12:
+            raise ValueError("Пароль повинен містити щонайменше 12 символів")
         checks = (
             any(char.islower() for char in password),
             any(char.isupper() for char in password),

@@ -220,13 +220,24 @@ class AutomationScheduler:
                         total_views += analytics.get('views', 0)
 
             # Оцінка доходу (CPM $0.075)
-            total_revenue = (total_views / 1000) * 0.075
+            try:
+                shorts_rpm = max(
+                    0.0, float(os.getenv('SHORTS_RPM_ESTIMATE', '0.075'))
+                )
+            except ValueError:
+                shorts_rpm = 0.075
+            shorts_revenue = (total_views / 1000) * shorts_rpm
+            affiliate_stats = self.db.get_affiliate_stats(since=today)
+            affiliate_revenue = affiliate_stats.get('revenue', 0)
+            total_revenue = shorts_revenue + affiliate_revenue
             profit = total_revenue - total_cost
 
             stats = {
                 'videos_created': videos_created,
                 'videos_uploaded': videos_uploaded,
                 'total_views': total_views,
+                'shorts_revenue_estimate': round(shorts_revenue, 4),
+                'affiliate_revenue': round(affiliate_revenue, 4),
                 'total_revenue': round(total_revenue, 4),
                 'total_cost': round(total_cost, 4),
                 'profit': round(profit, 4)

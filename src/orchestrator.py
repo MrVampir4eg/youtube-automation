@@ -98,11 +98,27 @@ class VideoProducer:
             raise ValueError('Вибраний профіль каналу не знайдено')
         offer = None
         if content_mode == 'affiliate':
+            auto_offer_requested = str(affiliate_offer_id or '').lower() == 'auto'
+            if auto_offer_requested:
+                if os.getenv('AUTO_SELECT_AFFILIATE_OFFER', 'False').lower() == 'true':
+                    offer = self.db.select_best_affiliate_offer(
+                        profile_id, niche_id=niche_id
+                    )
+                    affiliate_offer_id = offer.get('offer_id') if offer else None
+                    if not offer:
+                        logger.warning(
+                            'No enabled affiliate offer found; falling back to organic content'
+                        )
+                        content_mode = 'organic'
             if not affiliate_offer_id:
-                raise ValueError('Для партнерського режиму виберіть пропозицію')
-            offer = self.db.get_affiliate_offer(affiliate_offer_id)
-            if not offer or offer.get('profile_id') != profile_id:
-                raise ValueError('Партнерська пропозиція не належить цьому каналу')
+                if content_mode == 'affiliate':
+                    raise ValueError(
+                        'Для партнерського режиму немає дозволеної affiliate offer'
+                    )
+            else:
+                offer = offer or self.db.get_affiliate_offer(affiliate_offer_id)
+                if not offer or offer.get('profile_id') != profile_id:
+                    raise ValueError('Партнерська пропозиція не належить цьому каналу')
         if trigger_source not in {'manual', 'manual_admin'}:
             self.policy_guard.validate_automated_frequency(profile_id)
 
@@ -168,6 +184,14 @@ class VideoProducer:
             # 4. ГЕНЕРАЦІЯ SEO МЕТАДАНИХ
             logger.info("Step 4/5: Generating SEO metadata...")
             seo = self.content_gen.generate_seo_metadata(script)
+            if offer and seo.get('affiliate'):
+                seo['affiliate'].update({
+                    'offer_id': offer.get('offer_id') or affiliate_offer_id,
+                    'video_id': video_id,
+                    'tracking_base_url': (
+                        os.getenv('PUBLIC_BASE_URL', '').strip().rstrip('/')
+                    ),
+                })
             self.policy_guard.validate_metadata(seo, content_mode)
 
             logger.info(f"  Title: {seo['title'][:50]}...")
@@ -382,8 +406,14 @@ class VideoProducer:
         ai_cost = video.get('ai_cost', 0)
         views = analytics.get('views', 0)
 
-        # Приблизний розрахунок доходу (CPM $0.05-0.10 для Shorts)
-        estimated_revenue = (views / 1000) * 0.075  # Середній $0.075 CPM
+        try:
+            shorts_rpm = max(0.0, float(os.getenv('SHORTS_RPM_ESTIMATE', '0.075')))
+        except ValueError:
+            shorts_rpm = 0.075
+        estimated_revenue = (views / 1000) * shorts_rpm
+        affiliate_stats = self.db.get_affiliate_stats(video_id=video_id)
+        affiliate_revenue = affiliate_stats.get('revenue', 0)
+        total_revenue = estimated_revenue + affiliate_revenue
 
         return {
             'video_id': video_id,
@@ -392,11 +422,15 @@ class VideoProducer:
             'niche': video['niche'],
             'created_at': video['created_at'],
             'analytics': analytics,
+            'affiliate': affiliate_stats,
             'financials': {
                 'ai_cost': ai_cost,
-                'estimated_revenue': round(estimated_revenue, 4),
-                'roi': round((estimated_revenue / ai_cost - 1) * 100, 1) if ai_cost > 0 else 0,
-                'profit': round(estimated_revenue - ai_cost, 4)
+                'estimated_shorts_revenue': round(estimated_revenue, 4),
+                'confirmed_affiliate_revenue': round(affiliate_revenue, 4),
+                'estimated_revenue': round(total_revenue, 4),
+                'roi': round((total_revenue / ai_cost - 1) * 100, 1) if ai_cost > 0 else 0,
+                'profit': round(total_revenue - ai_cost, 4),
+                'shorts_rpm_estimate': shorts_rpm,
             }
         }
 

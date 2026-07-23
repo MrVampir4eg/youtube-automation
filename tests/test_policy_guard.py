@@ -27,19 +27,18 @@ def useful_script():
 class PolicyGuardTests(unittest.TestCase):
     def test_blocks_artificial_engagement_phrase(self):
         with tempfile.TemporaryDirectory() as directory:
-            guard = MonetizationPolicyGuard(
-                Database(str(Path(directory) / "policy.db"))
-            )
+            database = Database(str(Path(directory) / "policy.db"))
+            guard = MonetizationPolicyGuard(database)
             script = useful_script()
             script["cta"] = "Підписка за підписку — пиши в коментарях"
             with self.assertRaises(PolicyViolation):
                 guard.validate_script(script, "organic")
+            database.close()
 
     def test_affiliate_requires_https_and_disclosure(self):
         with tempfile.TemporaryDirectory() as directory:
-            guard = MonetizationPolicyGuard(
-                Database(str(Path(directory) / "policy.db"))
-            )
+            database = Database(str(Path(directory) / "policy.db"))
+            guard = MonetizationPolicyGuard(database)
             with self.assertRaises(PolicyViolation):
                 guard.validate_script(
                     useful_script(),
@@ -54,6 +53,7 @@ class PolicyGuardTests(unittest.TestCase):
                     "disclosure": "Партнерське посилання.",
                 },
             )
+            database.close()
 
     def test_automated_frequency_is_capped_per_profile(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(

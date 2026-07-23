@@ -11,6 +11,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from typing import Dict, List
+from urllib.parse import urlparse
 
 import requests
 
@@ -29,6 +30,19 @@ class TrendScout:
         self.timeout = max(2, int(os.getenv("MARKET_TRENDS_TIMEOUT", "8")))
         self.cache_seconds = max(300, int(os.getenv("MARKET_TRENDS_CACHE", "1800")))
         self.url = f"https://trends.google.com/trending/rss?geo={self.geo}"
+        configured_feeds = [
+            item.strip()
+            for item in os.getenv("GLOBAL_RSS_FEEDS", "").split(",")
+            if item.strip()
+        ]
+        default_feeds = [
+            "https://hnrss.org/frontpage",
+            "https://www.nasa.gov/rss/dyn/breaking_news.rss",
+            "https://www.animenewsnetwork.com/news/rss.xml",
+        ]
+        self.feed_urls = [self.url]
+        if os.getenv("ENABLE_GLOBAL_SOURCES", "True").lower() == "true":
+            self.feed_urls.extend(configured_feeds or default_feeds)
 
         blocked = {
             "війна", "обстріл", "ракета", "загинув", "загинула", "смерть",
@@ -85,33 +99,35 @@ class TrendScout:
         if now < float(self._cache.get("expires_at", 0)) and cached_topics:
             return list(cached_topics)
 
-        try:
-            response = requests.get(
-                self.url,
-                headers={"User-Agent": "Mozilla/5.0 ShortsMarketScout/1.0"},
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-            topics = []
-            for item in root.findall(".//item"):
-                title_node = item.find("title")
-                if title_node is None or not title_node.text:
-                    continue
-                title = self._clean_title(title_node.text)
-                if title and self._is_safe(title) and title not in topics:
-                    topics.append(title)
+        topics = []
+        for feed_url in self.feed_urls:
+            try:
+                response = requests.get(
+                    feed_url,
+                    headers={"User-Agent": "Mozilla/5.0 ShortsMarketScout/1.0"},
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                root = ET.fromstring(response.content)
+                source = urlparse(feed_url).netloc.replace("www.", "")
+                for item in root.findall(".//item"):
+                    title_node = item.find("title")
+                    if title_node is None or not title_node.text:
+                        continue
+                    title = self._clean_title(title_node.text)
+                    if source:
+                        title = f"{title} [{source}]"
+                    if title and self._is_safe(title) and title not in topics:
+                        topics.append(title)
+            except Exception as exc:
+                logger.warning("Global feed unavailable %s: %s", feed_url, exc)
 
-            self._cache = {
-                "expires_at": now + self.cache_seconds,
-                "topics": topics[:30],
-            }
-            logger.info("Loaded %s safe market signals for %s", len(topics), self.geo)
-            return topics[:30]
-        except Exception as exc:
-            logger.warning("Market trends unavailable; using evergreen ideas: %s", exc)
-            self._cache = {"expires_at": now + 300, "topics": []}
-            return []
+        self._cache = {
+            "expires_at": now + self.cache_seconds,
+            "topics": topics[:60],
+        }
+        logger.info("Loaded %s safe global market signals for %s", len(topics), self.geo)
+        return topics[:60]
 
     def _is_safe(self, title: str) -> bool:
         lowered = title.lower()

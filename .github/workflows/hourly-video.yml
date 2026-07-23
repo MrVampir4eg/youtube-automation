@@ -47,18 +47,56 @@ jobs:
         shell: bash
         env:
           BOT_TOKEN: ${{ secrets.AUTOMATION_API_TOKEN }}
-          APP_URL: ${{ vars.PUBLIC_BASE_URL || 'https://youtube-automation-zoiy.onrender.com' }}
+          APP_URL: ${{ vars.PUBLIC_BASE_URL || '' }}
           PROFILE_ID: ${{ inputs.profile_id || vars.BOT_PROFILE_ID || 'default' }}
           CONTENT_MODE: ${{ inputs.content_mode || vars.BOT_CONTENT_MODE || 'organic' }}
           AFFILIATE_OFFER_ID: ${{ inputs.affiliate_offer_id || vars.BOT_AFFILIATE_OFFER_ID || '' }}
           PUBLISH_SCOPE: ${{ inputs.publish_scope || vars.BOT_PUBLISH_SCOPE || 'all_enabled' }}
           NICHE: ${{ inputs.niche || vars.BOT_NICHE || '' }}
+          AUTO_ROTATE_CONTENT: ${{ vars.AUTO_ROTATE_CONTENT || 'true' }}
+          AUTO_SELECT_AFFILIATE_OFFER: ${{ vars.AUTO_SELECT_AFFILIATE_OFFER || 'true' }}
+          ORGANIC_NICHE: ${{ vars.BOT_ORGANIC_NICHE || 'tech' }}
+          ANIME_NICHE: ${{ vars.BOT_ANIME_NICHE || 'anime' }}
+          AFFILIATE_NICHE: ${{ vars.BOT_AFFILIATE_NICHE || 'tech' }}
         run: |
           set -euo pipefail
 
           if [[ -z "$BOT_TOKEN" ]]; then
             echo "Add AUTOMATION_API_TOKEN to GitHub Actions secrets" >&2
             exit 1
+          fi
+          if [[ -z "$APP_URL" ]]; then
+            echo "Add PUBLIC_BASE_URL as a GitHub Actions variable" >&2
+            exit 1
+          fi
+
+          # Three controlled slots: useful organic content, anime reach, and
+          # one partner slot only when a real approved offer is configured.
+          # Manual workflow inputs always win over the rotation.
+          if [[ -z "${{ inputs.content_mode }}" && "$AUTO_ROTATE_CONTENT" == "true" ]]; then
+            local_hour="$(TZ=Europe/Kyiv date +%H)"
+            case "$local_hour" in
+              06)
+                CONTENT_MODE="organic"
+                NICHE="$ORGANIC_NICHE"
+                ;;
+              12)
+                CONTENT_MODE="organic"
+                NICHE="$ANIME_NICHE"
+                ;;
+              18)
+                if [[ -n "$AFFILIATE_OFFER_ID" || "$AUTO_SELECT_AFFILIATE_OFFER" == "true" ]]; then
+                  CONTENT_MODE="affiliate"
+                  NICHE="$AFFILIATE_NICHE"
+                  if [[ -z "$AFFILIATE_OFFER_ID" ]]; then
+                    AFFILIATE_OFFER_ID="auto"
+                  fi
+                else
+                  CONTENT_MODE="organic"
+                  NICHE="$ORGANIC_NICHE"
+                fi
+                ;;
+            esac
           fi
 
           app_url="${APP_URL%/}"

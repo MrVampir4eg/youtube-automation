@@ -62,6 +62,10 @@ class VideoRenderer:
             'VIDEO_PRESET',
             'ultrafast' if low_memory_mode else 'medium'
         )
+        self.animated_backgrounds = os.getenv(
+            'ANIMATED_BACKGROUNDS', 'True'
+        ).lower() == 'true'
+        self._visual_mode = 'stock_motion'
 
         # Директорії
         self.output_dir = Path('output/videos')
@@ -96,6 +100,7 @@ class VideoRenderer:
         background_parts = []
 
         try:
+            self._visual_mode = script_data.get('visual_mode', 'stock_motion')
             # 1. Реальна тривалість визначається готовою озвучкою.
             audio = AudioFileClip(str(audio_path))
             duration = audio.duration
@@ -414,6 +419,11 @@ class VideoRenderer:
         else:
             # Зображення - робимо статичний clip
             clip = ImageClip(str(media_path), duration=duration)
+
+            if self.animated_backgrounds or self._visual_mode == 'anime_motion':
+                clip = clip.resize(
+                    lambda t: 1.04 + 0.08 * min(1.0, t / max(duration, 0.1))
+                )
 
         # Aspect-fill без розтягування облич та предметів.
         scale = max(self.width / clip.w, self.height / clip.h)

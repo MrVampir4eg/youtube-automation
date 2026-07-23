@@ -441,6 +441,18 @@
                 <div class="value">$<span id="total-cost">0.00</span></div>
                 <div class="label">всього</div>
             </div>
+
+            <div class="stat-card positive">
+                <h3>Affiliate revenue</h3>
+                <div class="value">$<span id="affiliate-revenue">0.00</span></div>
+                <div class="label"><span id="affiliate-clicks">0</span> кліків</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Ціль за 7 днів</h3>
+                <div class="value" id="weekly-target">$505</div>
+                <div class="label">підтверджено: $<span id="weekly-confirmed">0.00</span></div>
+            </div>
         </div>
 
         <div class="card">
@@ -535,7 +547,7 @@
                 </div>
                 <div class="form-field">
                     <label for="offer-cta">Заклик</label>
-                    <input id="offer-cta" placeholder="Посилання — в описі">
+                    <input id="offer-cta" placeholder="Перевір посилання в профілі">
                 </div>
             </div>
             <div class="actions"><button onclick="createOffer()">+ Додати пропозицію</button></div>
@@ -700,6 +712,7 @@
                         <p>${escapeHtml(item.description)}</p>
                         <p style="margin-top:8px; word-break:break-all;">${escapeHtml(item.url)}</p>
                         <p>ID для бота: <code>${escapeHtml(item.offer_id)}</code></p>
+                        <p>Посилання в bio/profile: <a href="${escapeHtml(`${window.location.origin}/go/${item.offer_id}`)}" target="_blank" rel="noopener">${escapeHtml(`${window.location.origin}/go/${item.offer_id}`)}</a></p>
                     </div>
                 `).join('')
                 : '<p class="loading">Для цього каналу ще немає партнерських пропозицій</p>';
@@ -747,7 +760,7 @@
             const affiliate = document.getElementById('content-mode-select').value === 'affiliate';
             document.getElementById('offer-field').classList.toggle('hidden', !affiliate);
             document.getElementById('mode-note').textContent = affiliate
-                ? 'Партнерський режим: сценарій природно пояснить користь вибраного сервісу, а в опис буде додано ваше посилання та disclosure.'
+                ? 'Партнерський режим: сценарій показує проблему, а CTA веде з Reels у bio/profile на сторінку оферу з disclosure.'
                 : 'Звичайний режим: ролик без реклами та партнерських посилань.';
         }
 
@@ -760,6 +773,12 @@
                 document.getElementById('total-videos').textContent = data.total.total_videos;
                 document.getElementById('uploaded-videos').textContent = data.total.uploaded_videos;
                 document.getElementById('total-cost').textContent = data.total.total_cost.toFixed(2);
+                const views = (data.daily_chart.views || []).reduce((sum, value) => sum + Number(value || 0), 0);
+                document.getElementById('total-views').textContent = views.toLocaleString();
+                document.getElementById('affiliate-revenue').textContent = Number(data.affiliate.revenue || 0).toFixed(2);
+                document.getElementById('affiliate-clicks').textContent = Number(data.affiliate.clicks || 0).toLocaleString();
+                document.getElementById('weekly-target').textContent = `${data.weekly_target.currency} ${Number(data.weekly_target.amount || 0).toFixed(0)}`;
+                document.getElementById('weekly-confirmed').textContent = Number(data.weekly_target.confirmed_revenue || 0).toFixed(2);
 
                 // Топ відео
                 const topVideosHtml = data.top_videos.map(v => `

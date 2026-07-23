@@ -486,6 +486,58 @@
           "cta": "Фінал був очевидний?"
         }
       ]
+    },
+    {
+      "id": "anime",
+      "name": "Аніме та японська попкультура",
+      "description": "Оригінальні пояснення, історії та огляди без копіювання сцен і чужих роликів",
+      "market_weight": 1.1,
+      "monetization_safe": true,
+      "target_cpm": 3.2,
+      "voice": "Polina",
+      "keywords": [
+        "anime",
+        "manga",
+        "japanese pop culture",
+        "animation",
+        "character writing",
+        "anime facts",
+        "otaku"
+      ],
+      "trend_seeds": [
+        "як працює драматургія аніме",
+        "аніме-архетипи без спойлерів",
+        "японська попкультура і меми"
+      ],
+      "video_themes": [
+        "original anime inspired silhouette",
+        "manga drawing timelapse",
+        "neon Tokyo illustration",
+        "Japanese animation studio desk",
+        "ink brush manga texture",
+        "anime convention crowd"
+      ],
+      "visual_mode": "anime_motion",
+      "content_templates": [
+        {
+          "type": "anime_explained",
+          "hook_template": "Одна деталь в аніме змінює всю сцену",
+          "body_structure": "конкретний прийом → просте пояснення → оригінальний приклад → висновок",
+          "cta": "Який прийом розібрати далі?"
+        },
+        {
+          "type": "character_writing",
+          "hook_template": "Чому цей тип героя працює краще за ідеального",
+          "body_structure": "очікування → недолік героя → конфлікт → чому це чіпляє",
+          "cta": "Збережи для наступного перегляду"
+        },
+        {
+          "type": "anime_culture",
+          "hook_template": "Ця японська ідея давно живе в аніме",
+          "body_structure": "культурний контекст → безпечний приклад → сучасне прочитання → фінальна думка",
+          "cta": "Яку тему перекласти наступною?"
+        }
+      ]
     }
   ],
 

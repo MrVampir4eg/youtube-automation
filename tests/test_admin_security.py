@@ -62,7 +62,6 @@ class AdminSecurityTests(unittest.TestCase):
             database.close()
 
     def test_password_policy_rejects_weak_password(self):
-        AdminSecurity.validate_password("StrongPwd1")
         with self.assertRaises(ValueError):
             AdminSecurity.validate_password("short")
         with self.assertRaises(ValueError):

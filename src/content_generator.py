@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import openai
 from anthropic import Anthropic
+from src.trend_scout import TrendScout
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class ContentGenerator:
 
         self.niches = {n['id']: n for n in self.config['niches']}
         self.global_settings = self.config['global_settings']
+        self.trend_scout = TrendScout()
 
         # Лічильники для tracking витрат
         self.tokens_used_today = 0
@@ -85,11 +87,14 @@ class ContentGenerator:
         else:
             template = random.choice(niche['content_templates'])
 
+        market_signals = self.trend_scout.get_signals(niche)
+
         # Побудова промпту
         if content_mode == 'affiliate' and not affiliate_offer:
             raise ValueError('Для партнерського режиму виберіть партнерську пропозицію')
         prompt = self._build_prompt(
-            niche, template, content_mode, affiliate_offer, channel_name
+            niche, template, content_mode, affiliate_offer, channel_name,
+            market_signals,
         )
 
         # Генерація через AI
@@ -116,12 +121,15 @@ class ContentGenerator:
             'voice': niche['voice'],
             'keywords': niche['keywords'],
             'video_themes': niche['video_themes'],
+            'visual_mode': niche.get('visual_mode', 'stock_motion'),
+            'animation_style': niche.get('animation_style', 'kinetic_captions'),
             'metadata': {
                 'generated_at': datetime.utcnow().isoformat(),
                 'provider': self.provider,
                 'model': self.model,
                 'content_mode': content_mode,
                 'affiliate_offer': affiliate_offer or None,
+                'market_signals': market_signals[:6],
                 'tokens_used': script_data.get('tokens', 0),
                 'cost': script_data.get('cost', 0)
             }
@@ -146,6 +154,7 @@ class ContentGenerator:
         content_mode: str = 'organic',
         affiliate_offer: Optional[Dict] = None,
         channel_name: str = '',
+        market_signals: Optional[List[str]] = None,
     ) -> str:
         """Побудова промпту для AI"""
 
@@ -164,7 +173,7 @@ class ContentGenerator:
 - Перевірений опис: {affiliate_offer.get('description', '')}
 - Назви сервіс природно один раз і поясни, яку конкретну проблему він вирішує.
 - Не вигадуй функції, ціну, власний досвід, прибуток, гарантії чи рейтинги.
-- CTA: {affiliate_offer.get('cta') or 'Посилання — в описі'}
+- CTA: {affiliate_offer.get('cta') or 'Перевір посилання в профілі'}
 """
         else:
             mode_rules = """
@@ -172,8 +181,15 @@ class ContentGenerator:
 - Не рекламуй бренди та не спрямовуй глядача за зовнішнім посиланням.
 """
 
+        market_text = '; '.join(market_signals or []) or 'немає — використай evergreen тему'
         prompt = f"""Створи захоплюючий скрипт для YouTube Shorts на тему з ніші "{niche['name']}".
 {mode_rules}
+
+РИНКОВІ СИГНАЛИ:
+- Використай їх лише як ідеї для актуальної теми: {market_text}
+- Якщо сигнал іншою мовою, переклади ідею українською.
+- Не копіюй заголовок, текст статті, відео або чужий сценарій.
+- Додавай власне пояснення, контекст і перевірюваний висновок.
 
 ВИМОГИ:
 - Тривалість: {min_dur}-{max_dur} секунд ({min_words}-{max_words} слів)
@@ -184,9 +200,9 @@ class ContentGenerator:
 
 СТРУКТУРА:
 
-1. HOOK (перші 3-5 секунд, ~10 слів):
-   - Має МОМЕНТАЛЬНО захопити увагу
-   - Використовуй шокуючий факт / питання / обіцянку
+1. HOOK (перша секунда, 4-7 простих слів):
+   - Має МОМЕНТАЛЬНО зупинити свайп; без привітання і логотипа
+   - Використовуй конкретний конфлікт, контраст або дивину
    - Приклад формату: {template['hook_template']}
 
 2. BODY ({min_dur-8} секунд, ~{min_words-20} слів):
@@ -194,10 +210,11 @@ class ContentGenerator:
    - Динамічний темп, короткі речення
    - Факти + емоції
    - Storytelling, не лекція
+   - Додавай нову деталь або зміну кадру кожні 2-3 секунди
 
 3. CTA (останні 3-5 секунд, ~10 слів):
    - {template['cta']}
-   - Природно, не агресивно
+   - Для органічного режиму: збережи або надішли; для affiliate: перевір посилання в профілі
 
 СТИЛЬ:
 - Розмовний, але професійний
@@ -446,6 +463,7 @@ CTA:
                 f"\n🔗 {offer.get('name')}: {offer.get('url')}\n{disclosure}\n"
             )
             affiliate = {
+                'offer_id': offer.get('offer_id'),
                 'name': offer.get('name'),
                 'url': offer.get('url'),
                 'disclosure': disclosure,
