@@ -139,11 +139,10 @@ def require_admin_and_csrf():
 
     if ADMIN_UI_DISABLED and endpoint in ADMIN_UI_ENDPOINTS:
         if endpoint == 'index':
-            return jsonify({
-                'status': 'running',
-                'dashboard': 'disabled',
-                'scheduler_running': scheduler.is_running,
-            })
+            return render_template(
+                'automation_status.html',
+                scheduler_running=scheduler.is_running,
+            )
         return jsonify({
             'success': False,
             'error': 'Веб-адмінку вимкнено; працює автоматичний режим',
