@@ -40,6 +40,9 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=30),
     SESSION_REFRESH_EACH_REQUEST=True,
 )
+ADMIN_UI_DISABLED = os.getenv('DISABLE_ADMIN_UI', 'true').strip().lower() in {
+    '1', 'true', 'yes', 'on'
+}
 project_root = Path(__file__).resolve().parents[1]
 video_output_dir = (project_root / 'output' / 'videos').resolve()
 
@@ -118,9 +121,12 @@ def _clear_attempts(bucket):
 
 
 PUBLIC_ENDPOINTS = {
-    'login', 'forgot_password', 'reset_password', 'health',
-    'share_video_for_platform', 'affiliate_offer_page',
+    'health', 'share_video_for_platform', 'affiliate_offer_page',
     'affiliate_redirect', 'affiliate_webhook', 'advertise', 'static'
+}
+ADMIN_UI_ENDPOINTS = {
+    'index', 'login', 'logout', 'forgot_password', 'reset_password',
+    'admin_security_page',
 }
 BOT_ENDPOINTS = {'generate_video', 'generation_status', 'bot_status', 'health'}
 
@@ -131,8 +137,31 @@ def require_admin_and_csrf():
     endpoint = request.endpoint
     g.automation_bot = bool(endpoint in BOT_ENDPOINTS and _is_automation_bot())
 
+    if ADMIN_UI_DISABLED and endpoint in ADMIN_UI_ENDPOINTS:
+        if endpoint == 'index':
+            return jsonify({
+                'status': 'running',
+                'dashboard': 'disabled',
+                'scheduler_running': scheduler.is_running,
+            })
+        return jsonify({
+            'success': False,
+            'error': 'Веб-адмінку вимкнено; працює автоматичний режим',
+        }), 404
+
+    if not ADMIN_UI_DISABLED and endpoint in {
+        'login', 'forgot_password', 'reset_password'
+    }:
+        return None
+
     if endpoint in PUBLIC_ENDPOINTS or g.automation_bot:
         return None
+
+    if ADMIN_UI_DISABLED and request.path.startswith('/api/'):
+        return jsonify({
+            'success': False,
+            'error': 'Для API потрібен офіційний Bearer-токен бота',
+        }), 401
 
     admin = db.get_admin()
     valid_session = bool(
