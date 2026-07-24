@@ -23,19 +23,10 @@ USE_FREE_MODE=True
 FREE_TTS_PROVIDER=edge
 ENABLE_GLOBAL_SOURCES=True
 ANIMATED_BACKGROUNDS=True
-REELS_NATIVE_MODE=True
-SCENE_DURATION_SECONDS=2.4
-CAPTION_WORDS=3
 AUTO_UPLOAD=True
 AUTO_PUBLISH_PLATFORMS=youtube,instagram,facebook,tiktok
 PUBLIC_BASE_URL=https://твій-домен.onrender.com
-WEEKLY_REVENUE_TARGET=505
-WEEKLY_REVENUE_CURRENCY=USD
 AFFILIATE_FUNNEL_MODE=landing
-AUTO_SELECT_AFFILIATE_OFFER=True
-AFFILIATE_PRIOR_CLICKS=8
-AFFILIATE_PRIOR_EPC=0.25
-AFFILIATE_EXPLORATION_FACTOR=0.15
 AUTOMATION_API_TOKEN=довгий_секрет
 SECRET_KEY=довгий_секрет
 CLICK_HASH_SECRET=довгий_секрет
@@ -50,8 +41,6 @@ AFFILIATE_WEBHOOK_SECRET=довгий_секрет
 - Variable `PUBLIC_BASE_URL` — URL Render;
 - Variable `BOT_PROFILE_ID` — профіль каналу;
 - Variable `BOT_AFFILIATE_OFFER_ID` — ID дозволеної партнерської пропозиції;
-- Variable `AUTO_SELECT_AFFILIATE_OFFER=true` — optional; після додавання кількох
-  оферів система обирає офер за підтвердженим EPC із контрольованим тестуванням;
 - Variable `AUTO_ROTATE_CONTENT=true` — автоматична ротація слотів;
 - за потреби `BOT_ORGANIC_NICHE=tech`, `BOT_ANIME_NICHE=anime`, `BOT_AFFILIATE_NICHE=tech`.
 
@@ -70,11 +59,7 @@ AFFILIATE_WEBHOOK_SECRET=довгий_секрет
 2. записує клік, платформу, відео і `subid`;
 3. додає UTM;
 4. приймає підписаний webhook конверсії;
-5. рахує confirmed revenue, conversion rate, EPC, profit і залишок до тижневої цілі.
-
-`505` — це KPI, не гарантія виплати. Гроші вважай отриманими тільки після підтвердженої конверсії або фактичної виплати партнеркою.
-
-## Контроль на 7 днів
+5. рахує confirmed revenue, conversion rate, EPC і profit.
 
 Не збільшуй кількість роликів, якщо немає кліків і підтверджених конверсій. Перевіряй `/api/stats` раз на день. Масштабування має сенс тільки коли `EPC > собівартість одного ролика`.
 

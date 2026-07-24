@@ -54,7 +54,6 @@ jobs:
           PUBLISH_SCOPE: ${{ inputs.publish_scope || vars.BOT_PUBLISH_SCOPE || 'all_enabled' }}
           NICHE: ${{ inputs.niche || vars.BOT_NICHE || '' }}
           AUTO_ROTATE_CONTENT: ${{ vars.AUTO_ROTATE_CONTENT || 'true' }}
-          AUTO_SELECT_AFFILIATE_OFFER: ${{ vars.AUTO_SELECT_AFFILIATE_OFFER || 'true' }}
           ORGANIC_NICHE: ${{ vars.BOT_ORGANIC_NICHE || 'tech' }}
           ANIME_NICHE: ${{ vars.BOT_ANIME_NICHE || 'anime' }}
           AFFILIATE_NICHE: ${{ vars.BOT_AFFILIATE_NICHE || 'tech' }}
@@ -85,12 +84,9 @@ jobs:
                 NICHE="$ANIME_NICHE"
                 ;;
               18)
-                if [[ -n "$AFFILIATE_OFFER_ID" || "$AUTO_SELECT_AFFILIATE_OFFER" == "true" ]]; then
+                if [[ -n "$AFFILIATE_OFFER_ID" ]]; then
                   CONTENT_MODE="affiliate"
                   NICHE="$AFFILIATE_NICHE"
-                  if [[ -z "$AFFILIATE_OFFER_ID" ]]; then
-                    AFFILIATE_OFFER_ID="auto"
-                  fi
                 else
                   CONTENT_MODE="organic"
                   NICHE="$ORGANIC_NICHE"

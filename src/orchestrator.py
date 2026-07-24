@@ -98,27 +98,11 @@ class VideoProducer:
             raise ValueError('Вибраний профіль каналу не знайдено')
         offer = None
         if content_mode == 'affiliate':
-            auto_offer_requested = str(affiliate_offer_id or '').lower() == 'auto'
-            if auto_offer_requested:
-                if os.getenv('AUTO_SELECT_AFFILIATE_OFFER', 'False').lower() == 'true':
-                    offer = self.db.select_best_affiliate_offer(
-                        profile_id, niche_id=niche_id
-                    )
-                    affiliate_offer_id = offer.get('offer_id') if offer else None
-                    if not offer:
-                        logger.warning(
-                            'No enabled affiliate offer found; falling back to organic content'
-                        )
-                        content_mode = 'organic'
             if not affiliate_offer_id:
-                if content_mode == 'affiliate':
-                    raise ValueError(
-                        'Для партнерського режиму немає дозволеної affiliate offer'
-                    )
-            else:
-                offer = offer or self.db.get_affiliate_offer(affiliate_offer_id)
-                if not offer or offer.get('profile_id') != profile_id:
-                    raise ValueError('Партнерська пропозиція не належить цьому каналу')
+                raise ValueError('Для партнерського режиму виберіть пропозицію')
+            offer = self.db.get_affiliate_offer(affiliate_offer_id)
+            if not offer or offer.get('profile_id') != profile_id:
+                raise ValueError('Партнерська пропозиція не належить цьому каналу')
         if trigger_source not in {'manual', 'manual_admin'}:
             self.policy_guard.validate_automated_frequency(profile_id)
 

@@ -6,7 +6,6 @@ SQLite база даних для зберігання відео та стат�
 import sqlite3
 import os
 import uuid
-import math
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
@@ -115,23 +114,11 @@ class Database:
                 offer_id TEXT PRIMARY KEY,
                 profile_id TEXT NOT NULL,
                 name TEXT NOT NULL,
-                advertiser_name TEXT,
-                campaign_type TEXT DEFAULT 'affiliate',
-                status TEXT DEFAULT 'active',
                 url TEXT NOT NULL,
                 description TEXT NOT NULL,
                 keywords TEXT,
                 cta TEXT,
                 disclosure TEXT,
-                payout_model TEXT DEFAULT 'CPS',
-                payout_value REAL DEFAULT 0,
-                currency TEXT DEFAULT 'USD',
-                budget_total REAL DEFAULT 0,
-                starts_at TEXT,
-                ends_at TEXT,
-                tracking_slug TEXT,
-                approved_claims TEXT,
-                prohibited_claims TEXT,
                 enabled INTEGER DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -149,35 +136,6 @@ class Database:
                 ip_hash TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (offer_id) REFERENCES affiliate_offers(offer_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS ad_events (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                offer_id TEXT NOT NULL,
-                video_id TEXT,
-                event_type TEXT NOT NULL,
-                amount REAL DEFAULT 0,
-                currency TEXT DEFAULT 'USD',
-                source TEXT DEFAULT 'manual',
-                external_ref TEXT,
-                referrer_host TEXT,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (offer_id) REFERENCES affiliate_offers(offer_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS advertiser_leads (
-                lead_id TEXT PRIMARY KEY,
-                contact_name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                company TEXT NOT NULL,
-                website TEXT,
-                budget REAL DEFAULT 0,
-                currency TEXT DEFAULT 'USD',
-                objective TEXT,
-                notes TEXT,
-                status TEXT DEFAULT 'new',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS affiliate_conversions (
@@ -246,9 +204,6 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_affiliate_conversions_offer ON affiliate_conversions(offer_id);
             CREATE INDEX IF NOT EXISTS idx_affiliate_conversions_video ON affiliate_conversions(video_id);
             CREATE INDEX IF NOT EXISTS idx_affiliate_conversions_occurred ON affiliate_conversions(occurred_at);
-            CREATE INDEX IF NOT EXISTS idx_ad_events_offer ON ad_events(offer_id, created_at);
-            CREATE INDEX IF NOT EXISTS idx_ad_events_video ON ad_events(video_id);
-            CREATE INDEX IF NOT EXISTS idx_ad_leads_status ON advertiser_leads(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_reset_token_hash ON password_reset_tokens(token_hash);
             CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
             CREATE INDEX IF NOT EXISTS idx_automation_created ON automation_runs(created_at);
@@ -268,41 +223,6 @@ class Database:
         }.items():
             if column not in columns:
                 self.conn.execute(f"ALTER TABLE videos ADD COLUMN {column} {definition}")
-
-        offer_columns = {
-            row['name']
-            for row in self.conn.execute("PRAGMA table_info(affiliate_offers)").fetchall()
-        }
-        for column, definition in {
-            'advertiser_name': 'TEXT',
-            'campaign_type': "TEXT DEFAULT 'affiliate'",
-            'status': "TEXT DEFAULT 'active'",
-            'payout_model': "TEXT DEFAULT 'CPS'",
-            'payout_value': 'REAL DEFAULT 0',
-            'currency': "TEXT DEFAULT 'USD'",
-            'budget_total': 'REAL DEFAULT 0',
-            'starts_at': 'TEXT',
-            'ends_at': 'TEXT',
-            'tracking_slug': 'TEXT',
-            'approved_claims': 'TEXT',
-            'prohibited_claims': 'TEXT',
-        }.items():
-            if column not in offer_columns:
-                self.conn.execute(
-                    f"ALTER TABLE affiliate_offers ADD COLUMN {column} {definition}"
-                )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_tracking_slug "
-            "ON affiliate_offers(tracking_slug)"
-        )
-        legacy_offers = self.conn.execute(
-            "SELECT offer_id FROM affiliate_offers WHERE tracking_slug IS NULL"
-        ).fetchall()
-        for legacy in legacy_offers:
-            self.conn.execute(
-                "UPDATE affiliate_offers SET tracking_slug = ? WHERE offer_id = ?",
-                (uuid.uuid4().hex[:16], legacy['offer_id']),
-            )
 
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
@@ -654,153 +574,28 @@ class Database:
                 now,
             ),
         )
-        self.conn.execute(
-            """UPDATE affiliate_offers SET advertiser_name = ?, campaign_type = ?,
-               payout_model = ?, payout_value = ?, currency = ?, budget_total = ?,
-               starts_at = ?, ends_at = ?, tracking_slug = ?, approved_claims = ?,
-               prohibited_claims = ? WHERE offer_id = ?""",
-            (
-                data.get('advertiser_name', '').strip() or data['name'].strip(),
-                data.get('campaign_type', 'affiliate').strip().lower(),
-                data.get('payout_model', 'CPS').strip().upper(),
-                float(data.get('payout_value') or 0),
-                data.get('currency', 'USD').strip().upper()[:3],
-                float(data.get('budget_total') or 0),
-                data.get('starts_at') or None,
-                data.get('ends_at') or None,
-                uuid.uuid4().hex[:16],
-                data.get('approved_claims', '').strip(),
-                data.get('prohibited_claims', '').strip(),
-                offer_id,
-            ),
-        )
         self.conn.commit()
         return self.get_affiliate_offer(offer_id) or {}
 
-    def list_affiliate_offers(
-        self, profile_id: Optional[str] = None,
-        include_inactive: bool = False,
-    ) -> List[Dict]:
-        status_clause = "" if include_inactive else "AND status = 'active'"
+    def list_affiliate_offers(self, profile_id: Optional[str] = None) -> List[Dict]:
         if profile_id:
             rows = self.conn.execute(
                 """SELECT * FROM affiliate_offers
-                   WHERE enabled = 1 AND profile_id = ? """ + status_clause
-                + " ORDER BY created_at DESC",
+                   WHERE enabled = 1 AND profile_id = ? ORDER BY created_at DESC""",
                 (profile_id,),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM affiliate_offers WHERE enabled = 1 " + status_clause
-                + " ORDER BY created_at DESC"
+                "SELECT * FROM affiliate_offers WHERE enabled = 1 ORDER BY created_at DESC"
             ).fetchall()
         return [self._offer_row(row) for row in rows]
 
     def get_affiliate_offer(self, offer_id: str) -> Optional[Dict]:
         row = self.conn.execute(
-            """SELECT * FROM affiliate_offers
-               WHERE offer_id = ? AND enabled = 1 AND status = 'active'""",
-            (offer_id,),
-        ).fetchone()
-        return self._offer_row(row) if row else None
-
-    def get_campaign(self, offer_id: str) -> Optional[Dict]:
-        row = self.conn.execute(
             "SELECT * FROM affiliate_offers WHERE offer_id = ? AND enabled = 1",
             (offer_id,),
         ).fetchone()
         return self._offer_row(row) if row else None
-
-    def get_campaign_by_slug(self, tracking_slug: str) -> Optional[Dict]:
-        row = self.conn.execute(
-            """SELECT * FROM affiliate_offers
-               WHERE tracking_slug = ? AND enabled = 1 AND status = 'active'""",
-            (tracking_slug,),
-        ).fetchone()
-        return self._offer_row(row) if row else None
-
-    def update_campaign_status(self, offer_id: str, status: str) -> Dict:
-        if status not in {'draft', 'active', 'paused', 'ended'}:
-            raise ValueError('Невідомий статус кампанії')
-        cursor = self.conn.execute(
-            "UPDATE affiliate_offers SET status = ?, updated_at = ? WHERE offer_id = ?",
-            (status, datetime.now(timezone.utc).isoformat(), offer_id),
-        )
-        if cursor.rowcount != 1:
-            raise ValueError('Кампанію не знайдено')
-        self.conn.commit()
-        return self.get_campaign(offer_id) or {}
-
-    def select_best_affiliate_offer(
-        self, profile_id: str, niche_id: Optional[str] = None
-    ) -> Optional[Dict]:
-        """Choose an enabled offer using confirmed EPC plus controlled exploration."""
-        offers = self.list_affiliate_offers(profile_id)
-        if not offers:
-            return None
-
-        try:
-            prior_clicks = max(
-                1.0, float(os.getenv('AFFILIATE_PRIOR_CLICKS', '8'))
-            )
-        except (TypeError, ValueError):
-            prior_clicks = 8.0
-        try:
-            prior_epc = max(
-                0.0, float(os.getenv('AFFILIATE_PRIOR_EPC', '0.25'))
-            )
-        except (TypeError, ValueError):
-            prior_epc = 0.25
-        try:
-            exploration = max(
-                0.0, float(os.getenv('AFFILIATE_EXPLORATION_FACTOR', '0.15'))
-            )
-        except (TypeError, ValueError):
-            exploration = 0.15
-
-        total_clicks = 0
-        candidates = []
-        niche_text = str(niche_id or '').strip().lower()
-        for offer in offers:
-            stats = self.get_affiliate_stats(
-                profile_id=profile_id, offer_id=offer['offer_id']
-            )
-            clicks = int(stats.get('clicks', 0) or 0)
-            revenue = float(stats.get('revenue', 0) or 0)
-            total_clicks += clicks
-            keywords = [str(item).lower() for item in offer.get('keywords', [])]
-            niche_match = bool(
-                niche_text and any(
-                    niche_text in keyword or keyword in niche_text
-                    for keyword in keywords
-                )
-            )
-            smoothed_epc = (
-                revenue + prior_epc * prior_clicks
-            ) / (clicks + prior_clicks)
-            exploration_bonus = exploration * math.sqrt(
-                math.log(total_clicks + 2) / (clicks + 1)
-            )
-            niche_bonus = smoothed_epc * 0.10 if niche_match else 0.0
-            candidates.append({
-                'offer': offer,
-                'clicks': clicks,
-                'revenue': revenue,
-                'score': smoothed_epc + exploration_bonus + niche_bonus,
-            })
-
-        selected = max(
-            candidates,
-            key=lambda item: (item['score'], item['revenue'], item['clicks'])
-        )
-        logger.info(
-            "Affiliate offer selected: %s (score=%.4f, clicks=%s, revenue=%.4f)",
-            selected['offer'].get('offer_id'),
-            selected['score'],
-            selected['clicks'],
-            selected['revenue'],
-        )
-        return selected['offer']
 
     def record_affiliate_click(self, offer_id: str, data: Optional[Dict] = None) -> Dict:
         values = data or {}
@@ -972,131 +767,7 @@ class Database:
         except json.JSONDecodeError:
             offer['keywords'] = []
         offer['enabled'] = bool(offer.get('enabled'))
-        base_url = os.getenv('PUBLIC_BASE_URL', '').strip().rstrip('/')
-        offer['tracking_url'] = (
-            f"{base_url}/go/{offer['tracking_slug']}"
-            if base_url.startswith('https://') and offer.get('tracking_slug')
-            else offer.get('url')
-        )
         return offer
-
-    def record_ad_event(
-        self, offer_id: str, event_type: str, amount: float = 0,
-        currency: str = 'USD', video_id: Optional[str] = None,
-        source: str = 'manual', external_ref: Optional[str] = None,
-        referrer_host: Optional[str] = None,
-    ) -> int:
-        if event_type not in {'click', 'conversion', 'revenue', 'refund'}:
-            raise ValueError('Невідомий тип рекламної події')
-        if not self.get_campaign(offer_id):
-            raise ValueError('Кампанію не знайдено')
-        cursor = self.conn.execute(
-            """INSERT INTO ad_events (
-                offer_id, video_id, event_type, amount, currency,
-                source, external_ref, referrer_host, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                offer_id, video_id, event_type, float(amount or 0),
-                str(currency or 'USD').upper()[:3], str(source or 'manual')[:40],
-                external_ref, (referrer_host or '')[:255],
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        self.conn.commit()
-        return int(cursor.lastrowid)
-
-    def get_ad_center_summary(self, profile_id: Optional[str] = None) -> Dict:
-        where = "WHERE o.enabled = 1"
-        params: List = []
-        if profile_id:
-            where += " AND o.profile_id = ?"
-            params.append(profile_id)
-        rows = self.conn.execute(
-            f"""SELECT o.offer_id, o.name, o.advertiser_name, o.profile_id,
-                   o.campaign_type, o.status, o.payout_model, o.payout_value,
-                   o.currency, o.budget_total, o.tracking_slug,
-                   COUNT(CASE WHEN e.event_type = 'click' THEN 1 END) AS clicks,
-                   COUNT(CASE WHEN e.event_type = 'conversion' THEN 1 END) AS conversions,
-                   COALESCE(SUM(CASE
-                     WHEN e.event_type IN ('conversion', 'revenue') THEN e.amount
-                     WHEN e.event_type = 'refund' THEN -ABS(e.amount)
-                     ELSE 0 END), 0) AS revenue
-                FROM affiliate_offers o
-                LEFT JOIN ad_events e ON e.offer_id = o.offer_id
-                {where}
-                GROUP BY o.offer_id
-                ORDER BY revenue DESC, clicks DESC, o.created_at DESC""",
-            params,
-        ).fetchall()
-        campaigns = []
-        for row in rows:
-            item = dict(row)
-            clicks = int(item.get('clicks') or 0)
-            conversions = int(item.get('conversions') or 0)
-            revenue = float(item.get('revenue') or 0)
-            item['epc'] = round(revenue / clicks, 4) if clicks else 0
-            item['conversion_rate'] = round(conversions / clicks * 100, 2) if clicks else 0
-            campaigns.append(item)
-        total_clicks = sum(int(item['clicks']) for item in campaigns)
-        total_conversions = sum(int(item['conversions']) for item in campaigns)
-        total_revenue = sum(float(item['revenue']) for item in campaigns)
-        currencies = {item['currency'] for item in campaigns if item.get('currency')}
-        return {
-            'campaigns': campaigns,
-            'totals': {
-                'campaigns': len(campaigns),
-                'active_campaigns': sum(item['status'] == 'active' for item in campaigns),
-                'clicks': total_clicks,
-                'conversions': total_conversions,
-                'revenue': round(total_revenue, 2),
-                'currency': next(iter(currencies)) if len(currencies) == 1 else ('MIXED' if currencies else 'USD'),
-                'epc': round(total_revenue / total_clicks, 4) if total_clicks else 0,
-                'conversion_rate': round(total_conversions / total_clicks * 100, 2) if total_clicks else 0,
-            },
-        }
-
-    def create_advertiser_lead(self, data: Dict) -> Dict:
-        lead_id = uuid.uuid4().hex[:12]
-        now = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            """INSERT INTO advertiser_leads (
-                lead_id, contact_name, email, company, website, budget,
-                currency, objective, notes, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)""",
-            (
-                lead_id, data['contact_name'], data['email'], data['company'],
-                data.get('website'), float(data.get('budget') or 0),
-                str(data.get('currency') or 'USD').upper()[:3],
-                data.get('objective'), data.get('notes'), now, now,
-            ),
-        )
-        self.conn.commit()
-        return self.get_advertiser_lead(lead_id) or {}
-
-    def get_advertiser_lead(self, lead_id: str) -> Optional[Dict]:
-        row = self.conn.execute(
-            "SELECT * FROM advertiser_leads WHERE lead_id = ?", (lead_id,)
-        ).fetchone()
-        return dict(row) if row else None
-
-    def list_advertiser_leads(self, limit: int = 100) -> List[Dict]:
-        rows = self.conn.execute(
-            "SELECT * FROM advertiser_leads ORDER BY created_at DESC LIMIT ?",
-            (max(1, min(int(limit), 200)),),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def update_advertiser_lead_status(self, lead_id: str, status: str) -> Dict:
-        if status not in {'new', 'contacted', 'approved', 'rejected'}:
-            raise ValueError('Невідомий статус заявки')
-        cursor = self.conn.execute(
-            "UPDATE advertiser_leads SET status = ?, updated_at = ? WHERE lead_id = ?",
-            (status, datetime.now(timezone.utc).isoformat(), lead_id),
-        )
-        if cursor.rowcount != 1:
-            raise ValueError('Заявку не знайдено')
-        self.conn.commit()
-        return self.get_advertiser_lead(lead_id) or {}
 
     # ------------------------------------------------------------------
     # Single-administrator security

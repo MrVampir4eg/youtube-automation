@@ -17,7 +17,6 @@ class DashboardAuthenticationTests(unittest.TestCase):
                 "ADMIN_PASSWORD": "InitialStrong123",
                 "SECRET_KEY": "unit-test-session-secret",
                 "AUTOMATION_API_TOKEN": "unit-test-bot-token",
-                "DISABLE_ADMIN_UI": "False",
                 "USE_FREE_MODE": "True",
                 "ENABLE_MARKET_TRENDS": "False",
                 "ENABLE_INTERNAL_SCHEDULER": "False",

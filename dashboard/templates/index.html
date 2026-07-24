@@ -407,6 +407,13 @@
                         Система активна | Останнє оновлення: <span id="last-update">--:--</span>
                     </p>
                 </div>
+                <div class="admin-actions">
+                    <a href="/admin/security">🔐 Безпека й бот</a>
+                    <form action="/logout" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="logout-button" type="submit">Вийти</button>
+                    </form>
+                </div>
             </div>
         </div>
 
@@ -441,11 +448,6 @@
                 <div class="label"><span id="affiliate-clicks">0</span> кліків</div>
             </div>
 
-            <div class="stat-card">
-                <h3>Ціль за 7 днів</h3>
-                <div class="value" id="weekly-target">$505</div>
-                <div class="label">підтверджено: $<span id="weekly-confirmed">0.00</span></div>
-            </div>
         </div>
 
         <div class="card">
@@ -770,9 +772,6 @@
                 document.getElementById('total-views').textContent = views.toLocaleString();
                 document.getElementById('affiliate-revenue').textContent = Number(data.affiliate.revenue || 0).toFixed(2);
                 document.getElementById('affiliate-clicks').textContent = Number(data.affiliate.clicks || 0).toLocaleString();
-                document.getElementById('weekly-target').textContent = `${data.weekly_target.currency} ${Number(data.weekly_target.amount || 0).toFixed(0)}`;
-                document.getElementById('weekly-confirmed').textContent = Number(data.weekly_target.confirmed_revenue || 0).toFixed(2);
-
                 // Топ відео
                 const topVideosHtml = data.top_videos.map(v => `
                     <div class="video-item">
